@@ -1,0 +1,290 @@
+postgres # SELECT version();
+
+-------------------------------------------------------------
+bash # psql --version
+
+-------------------------------------------------------------
+bash # cat $PGDATA/PG_VERSION
+
+-------------------------------------------------------------
+postgres=# SELECT date_trunc('second', 
+current_timestamp - pg_postmaster_start_time()) as uptime;
+
+-------------------------------------------------------------
+postgres=# SELECT pg_postmaster_start_time(); 
+
+-------------------------------------------------------------
+postgres=# SELECT current_timestamp - pg_postmaster_start_time(); 
+
+-------------------------------------------------------------
+postgres=# SELECT date_trunc('second', 
+ current_timestamp - pg_postmaster_start_time()) as uptime;
+
+-------------------------------------------------------------
+export PGROOT=/var/lib/pgsql/ 
+export PGRELEASE=10
+export PGSERVERNAME=mamba 
+export PGDATA=$PGROOT/$PGRELEASE/$PGSERVERNAME
+
+-------------------------------------------------------------
+pg_controldata <data-directory> | grep "system identifier"
+Database system identifier:           5558338346489861223
+
+-------------------------------------------------------------
+/usr/lib/postgresql/10/bin/pg_controldata $PGDATA
+
+-------------------------------------------------------------
+pg_control version number: 1002
+Catalog version number: 201707211
+Database system identifier: 6320137769675861859
+Database cluster state: in production
+pg_control last modified: Sun 31 Dec 2017 16:17:41 PM GMT
+Latest checkpoint location: 0/19000728
+Prior checkpoint location: 0/19000648
+Latest checkpoint's REDO location: 0/190006F0
+Latest checkpoint's REDO WAL file: 000000010000000000000019
+Latest checkpoint's TimeLineID: 1
+Latest checkpoint's PrevTimeLineID: 1
+Latest checkpoint's full_page_writes: on
+Latest checkpoint's NextXID: 0/703
+Latest checkpoint's NextOID: 24978
+Latest checkpoint's NextMultiXactId: 1
+Latest checkpoint's NextMultiOffset: 0
+Latest checkpoint's oldestXID: 616
+Latest checkpoint's oldestXID's DB: 1
+Latest checkpoint's oldestActiveXID: 703
+Latest checkpoint's oldestMultiXid: 1
+Latest checkpoint's oldestMulti's DB: 1
+Latest checkpoint's oldestCommitTsXid:0
+Latest checkpoint's newestCommitTsXid:0
+Time of latest checkpoint: Sun 31 Dec 2017 16:17:41 PM GMT
+Fake LSN counter for unlogged rels: 0/1
+Minimum recovery ending location: 0/0
+Min recovery ending loc's timeline: 0
+Backup start location: 0/0
+Backup end location: 0/0
+End-of-backup record required: no
+wal_level setting: replica
+wal_log_hints setting: off
+max_connections setting: 100
+max_worker_processes setting: 8
+max_prepared_xacts setting: 0
+max_locks_per_xact setting: 64
+track_commit_timestamp setting: off
+Maximum data alignment: 8
+Database block size: 8192
+Blocks per segment of large relation: 131072
+WAL block size: 8192
+Bytes per WAL segment: 16777216
+Maximum length of identifiers: 64
+Maximum columns in an index: 32
+Maximum size of a TOAST chunk: 1996
+Size of a large-object chunk: 2048
+Date/time type storage: 64-bit integers
+Float4 argument passing: by value
+Float8 argument passing: by value
+Data page checksum version: 0
+Mock authentication nonce   a6b19bbbd477… (not shown in full
+
+----------------------------------------------------------------
+bash $ psql -l
+
+----------------------------------------------------------------
+postgres=# select datname from pg_database;
+
+----------------------------------------------------------------
+CREATE DATABASE my_database;
+
+----------------------------------------------------------------
+bash $ createdb my_database
+
+----------------------------------------------------------------
+postgres=# \x
+postgres=# select * from pg_database;
+
+----------------------------------------------------------------
+SELECT count(*) FROM information_schema.tables
+WHERE table_schema NOT IN ('information_schema',
+'pg_catalog');
+
+----------------------------------------------------------------
+postgres@ebony:~/10.2/main$ psql -c "\d"
+
+----------------------------------------------------------------
+SELECT pg_database_size(current_database());
+
+----------------------------------------------------------------
+SELECT sum(pg_database_size(datname)) from pg_database;
+
+----------------------------------------------------------------
+postgres=# select pg_relation_size('pgbench_accounts');
+
+----------------------------------------------------------------
+postgres=# select pg_total_relation_size('pgbench_accounts');
+
+----------------------------------------------------------------
+postgres=# \dt+ pgbench_accounts
+
+----------------------------------------------------------------
+SELECT pg_size_pretty(pg_relation_size('pgbench_accounts'));
+
+----------------------------------------------------------------
+SELECT table_name
+,pg_relation_size(table_schema || '.' || table_name) as size
+FROM information_schema.tables
+WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+ORDER BY size DESC
+LIMIT 10;
+
+-----------------------------------------------------------------
+SELECT count(*) FROM table;
+
+----------------------------------------------------------------
+postgres=# select count(*) from orders;
+
+-----------------------------------------------------------------
+SELECT (CASE WHEN reltuples > 0 THEN
+pg_relation_size(oid)*reltuples/(8192*relpages)
+ELSE 0
+END)::bigint AS estimated_row_count
+FROM pg_class
+WHERE oid = 'mytable'::regclass;
+
+-----------------------------------------------------------------
+SELECT reltablespace, relfilenode FROM pg_class  
+WHERE oid = 'mytable'::regclass;
+
+-----------------------------------------------------------------
+SELECT oid as databaseid FROM pg_database  
+WHERE datname = current_database();
+
+-----------------------------------------------------------------
+$PGDATADIR/base/{databaseid}/{relfilenode}*
+
+-----------------------------------------------------------------
+$PGDATADIR/pg_tblspc/{reltablespace}/{databaseid}/{relfilenode}*
+
+-----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION estimated_row_count(text) 
+RETURNS bigint 
+LANGUAGE sql 
+AS $$ 
+SELECT (CASE WHEN reltuples > 0 THEN 
+              pg_relation_size($1)*reltuples/(8192*relpages) 
+             ELSE 0 
+             END)::bigint 
+FROM pg_class 
+WHERE oid = $1::regclass; 
+$$;
+
+----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION pg_relation_size_nolock(tablename regclass) 
+RETURNS BIGINT 
+LANGUAGE plpgsql 
+AS $$ 
+DECLARE 
+    classoutput RECORD; 
+    tsid        INTEGER; 
+    rid         INTEGER; 
+    dbid        INTEGER; 
+    filepath    TEXT; 
+    filename    TEXT; 
+    datadir     TEXT; 
+    i           INTEGER := 0; 
+    tablesize   BIGINT; 
+BEGIN 
+    -- 
+    -- Get data directory 
+    -- 
+    EXECUTE 'SHOW data_directory' INTO datadir; 
+    -- 
+    -- Get relfilenode and reltablespace 
+    -- 
+    SELECT 
+     reltablespace as tsid 
+    ,relfilenode as rid 
+    INTO classoutput 
+    FROM pg_class 
+    WHERE oid = tablename 
+    AND relkind = 'r'; 
+    -- 
+    -- Throw an error if we can't find the tablename specified 
+    -- 
+    IF NOT FOUND THEN 
+      RAISE EXCEPTION 'tablename % not found', tablename; 
+    END IF; 
+    tsid := classoutput.tsid; 
+    rid := classoutput.rid; 
+    -- 
+    -- Get the database object identifier (oid) 
+    -- 
+    SELECT oid INTO dbid 
+    FROM pg_database 
+    WHERE datname = current_database(); 
+    -- 
+    -- Use some internals knowledge to set the filepath 
+    -- 
+    IF tsid = 0 THEN 
+  filepath := datadir || '/base/' || dbid || '/' || rid; 
+    ELSE 
+  filepath := datadir || '/pg_tblspc/' || tsid || '/' 
+              || dbid || '/' || rid; 
+    END IF; 
+    -- 
+    -- Look for the first file. Report if missing 
+    -- 
+    SELECT (pg_stat_file(filepath)).size 
+    INTO tablesize; 
+    -- 
+    -- Sum the sizes of additional files, if any 
+    -- 
+    WHILE FOUND LOOP 
+  i := i + 1; 
+  filename := filepath || '.' || i; 
+        -- 
+        -- pg_stat_file returns ERROR if it cannot see file 
+        -- so we must trap the error and exit loop 
+        -- 
+      BEGIN 
+      SELECT tablesize + (pg_stat_file(filename)).size 
+          INTO tablesize; 
+      EXCEPTION 
+           WHEN OTHERS THEN 
+          EXIT; 
+      END; 
+    END LOOP; 
+    RETURN tablesize; 
+END; 
+$$;
+
+-----------------------------------------------------------------
+cookbook=> SELECT * FROM pg_extension;
+
+-----------------------------------------------------------------
+CREATE TABLE orders (
+orderid integer PRIMARY KEY
+);
+CREATE TABLE orderlines (
+orderid integer
+,lineid smallint
+,PRIMARY KEY (orderid, lineid)
+);
+
+-----------------------------------------------------------------
+ALTER TABLE orderlines ADD FOREIGN KEY (orderid)
+REFERENCES orders (orderid);
+
+-----------------------------------------------------------------
+DROP TABLE orders;
+
+-----------------------------------------------------------------
+\d+ orders
+
+-----------------------------------------------------------------
+SELECT * FROM pg_constraint
+WHERE confrelid = 'orders'::regclass;
+
+-----------------------------------------------------------------
+DROP TABLE orders;
+
+-----------------------------------------------------------------

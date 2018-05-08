@@ -1,0 +1,425 @@
+ postgres=# \x
+ postgres=# \dx pg_stat_statements
+
+-----------------------------------------------------------------------------
+postgres=# CREATE EXTENSION pg_stat_statements; 
+postgres=# ALTER SYSTEM
+          SET shared_preload_libraries = 'pg_stat_statements';
+
+-----------------------------------------------------------------------------
+postgres=# SELECT calls, total_time, query FROM pg_stat_statements 
+         ORDER BY total_time DESC LIMIT 10;
+
+-----------------------------------------------------------------------------
+postgres=# \d pg_stat_statements 
+
+-----------------------------------------------------------------------------
+postgres=# ALTER SYSTEM
+          SET log_min_duration_statement = 10000;
+
+-----------------------------------------------------------------------------
+postgres=# CREATE EXTENSION pgstatslog;
+
+-----------------------------------------------------------------------------
+SELECT collect_deltas();
+
+-----------------------------------------------------------------------------
+*/5 * * * * /usr/bin/psql -c 'SELECT collect_deltas()' mydbname
+
+-----------------------------------------------------------------------------
+postgres=# EXPLAIN (ANALYZE, BUFFERS) ...SQL...
+
+-----------------------------------------------------------------------------
+postgres=# EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM t;
+
+-----------------------------------------------------------------------------
+SELECT * FROM events ORDER BY id DESC LIMIT 3;
+
+-----------------------------------------------------------------------------
+postgres=# CREATE TABLE events(id SERIAL);
+
+postgres=# INSERT INTO events SELECT generate_series(1,1000000);
+
+postgres=# EXPLAIN (ANALYZE)
+             SELECT * FROM events ORDER BY id DESC LIMIT 3;
+
+postgres=# CREATE INDEX events_id_ndx ON events(id);
+
+postgres=# EXPLAIN (ANALYZE)
+             SELECT * FROM events ORDER BY id DESC LIMIT 3;
+
+-----------------------------------------------------------------------------
+user@host:~$ top
+
+-----------------------------------------------------------------------------
+EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT count(*) FROM t;
+
+-----------------------------------------------------------------------------
+SELECT title, ts_rank_cd(body_tsv, query, 20) AS text_rank
+FROM articles, plainto_tsquery('spicy potatoes') AS query
+WHERE body_tsv @@ query
+ORDER BY rank DESC
+LIMIT 20
+;
+
+-----------------------------------------------------------------------------
+SELECT title, ts_rank_cd(body_tsv, query, 20) AS text_rank
+FROM articles, plainto_tsquery('spicy potatoes') AS query
+WHERE body_tsv @@ query
+ORDER BY rank DESC, articles.id
+OFFSET 20 LIMIT 20;
+
+-----------------------------------------------------------------------------
+SELECT * FROM accounts WHERE branch_id = 7;
+
+-----------------------------------------------------------------------------
+SELECT count(*), sum(balance) FROM accounts WHERE branch_id = 7;
+
+-----------------------------------------------------------------------------
+postgres=# SELECT avg(id) FROM events; 
+
+postgres=# SELECT  avg(id)  FROM events TABLESAMPLE system(1); 
+
+postgres=# EXPLAIN (ANALYZE, BUFFERS) SELECT avg(id) FROM events; 
+
+postgres=# EXPLAIN (ANALYZE, BUFFERS) 
+          SELECT avg(id) FROM events TABLESAMPLE system(1); 
+
+-----------------------------------------------------------------------------
+SELECT shop.sp_name AS shop_name,
+       q1_nloc_profit.profit AS q1_profit,
+       q2_nloc_profit.profit AS q2_profit,
+       q3_nloc_profit.profit AS q3_profit,
+       q4_nloc_profit.profit AS q4_profit,
+       year_nloc_profit.profit AS year_profit
+  FROM (SELECT * FROM salespoint ORDER BY sp_name) AS shop
+  LEFT JOIN (
+       SELECT
+          spoint_id,
+          sum(sale_price) - sum(cost) AS profit,
+          count(*) AS nr_of_sales
+        FROM sale s
+        JOIN item_in_wh iw ON s.item_in_wh_id=iw.id
+        JOIN item i ON iw.item_id = i.id
+        JOIN salespoint sp ON s.spoint_id = sp.id
+        JOIN location sploc ON sp.loc_id = sploc.id
+        JOIN warehouse wh ON iw.whouse_id = wh.id
+        JOIN location whloc ON wh.loc_id = whloc.id
+       WHERE sale_time >= '2013-01-01'
+         AND sale_time <  '2013-04-01'
+         AND sploc.id != whloc.id
+       GROUP BY 1
+      ) AS q1_nloc_profit
+      ON shop.id = Q1_NLOC_PROFIT.spoint_id
+  LEFT JOIN (
+< similar subquery for 2nd quarter >
+      ) AS q2_nloc_profit
+      ON shop.id = q2_nloc_profit.spoint_id
+  LEFT JOIN (
+< similar subquery for 3rd quarter >
+      ) AS q3_nloc_profit
+      ON shop.id = q3_nloc_profit.spoint_id
+  LEFT JOIN (
+< similar subquery for 4th  quarter >
+      ) AS q4_nloc_profit
+      ON shop.id = q4_nloc_profit.spoint_id
+  LEFT JOIN (
+< similar subquery for full year >
+      ) AS year_nloc_profit
+      ON shop.id = year_nloc_profit.spoint_id
+ORDER BY 1
+;
+
+-----------------------------------------------------------------------------
+CREATE VIEW non_local_quarterly_profit_2013 AS
+       SELECT
+          spoint_id,
+          extract('quarter' from sale_time) as sale_quarter,
+          sum(sale_price) - sum(cost) AS profit,
+          count(*) AS nr_of_sales
+         FROM sale s
+         JOIN item_in_wh iw ON s.item_in_wh_id=iw.id
+         JOIN item i ON iw.item_id = i.id
+         JOIN salespoint sp ON s.spoint_id = sp.id
+         JOIN location sploc ON sp.loc_id = sploc.id
+         JOIN warehouse wh ON iw.whouse_id = wh.id
+         JOIN location whloc ON wh.loc_id = whloc.id
+       WHERE sale_time >= '2013-01-01'
+         AND sale_time <  '2014-01-01'
+         AND sploc.id != whloc.id
+       GROUP BY 1,2;
+SELECT shop.sp_name AS shop_name,
+       q1_nloc_profit.profit as q1_profit,
+       q2_nloc_profit.profit as q2_profit,
+       q3_nloc_profit.profit as q3_profit,
+       q4_nloc_profit.profit as q4_profit,
+       year_nloc_profit.profit as year_profit
+  FROM (SELECT * FROM salespoint ORDER BY sp_name) AS shop
+  LEFT JOIN non_local_quarterly_profit_2013 AS q1_nloc_profit
+      ON shop.id = Q1_NLOC_PROFIT.spoint_id
+   AND q1_nloc_profit.sale_quarter = 1
+  LEFT JOIN non_local_quarterly_profit_2013 AS q2_nloc_profit
+      ON shop.id = Q2_NLOC_PROFIT.spoint_id
+  AND q2_nloc_profit.sale_quarter = 2
+  LEFT JOIN non_local_quarterly_profit_2013 AS q3_nloc_profit
+      ON shop.id = Q3_NLOC_PROFIT.spoint_id
+  AND q3_nloc_profit.sale_quarter = 3
+  LEFT JOIN non_local_quarterly_profit_2013 AS q4_nloc_profit
+      ON shop.id = Q4_NLOC_PROFIT.spoint_id
+  AND q4_nloc_profit.sale_quarter = 4
+  LEFT JOIN (
+        SELECT spoint_id, sum(profit) AS profit
+          FROM non_local_quarterly_profit_2013 GROUP BY 1
+      ) AS year_nloc_profit
+      ON shop.id = year_nloc_profit.spoint_id
+ORDER BY 1;
+
+-----------------------------------------------------------------------------
+WITH nlqp AS (
+      SELECT
+          spoint_id,
+          extract('quarter' from sale_time) as sale_quarter,
+          sum(sale_price) - sum(cost) AS profit,
+          count(*) AS nr_of_sales
+        FROM sale s
+        JOIN item_in_wh iw ON s.item_in_wh_id=iw.id
+        JOIN item i ON iw.item_id = i.id
+        JOIN salespoint sp ON s.spoint_id = sp.id
+        JOIN location sploc ON sp.loc_id = sploc.id
+        JOIN warehouse wh ON iw.whouse_id = wh.id
+        JOIN location whloc ON wh.loc_id = whloc.id
+       WHERE sale_time >= '2013-01-01'
+        AND sale_time <  '2014-01-01'
+        AND sploc.id != whloc.id
+       GROUP BY 1,2
+)
+SELECT shop.sp_name AS shop_name,
+       q1_nloc_profit.profit as q1_profit,
+       q2_nloc_profit.profit as q2_profit,
+       q3_nloc_profit.profit as q3_profit,
+       q4_nloc_profit.profit as q4_profit,
+       year_nloc_profit.profit as year_profit
+  FROM (SELECT * FROM salespoint ORDER BY sp_name) AS shop
+  LEFT JOIN nlqp AS q1_nloc_profit
+       ON shop.id = Q1_NLOC_PROFIT.spoint_id
+   AND q1_nloc_profit.sale_quarter = 1
+  LEFT JOIN nlqp AS q2_nloc_profit
+       ON shop.id = Q2_NLOC_PROFIT.spoint_id
+   AND q2_nloc_profit.sale_quarter = 2
+  LEFT JOIN nlqp AS q3_nloc_profit
+       ON shop.id = Q3_NLOC_PROFIT.spoint_id
+   AND q3_nloc_profit.sale_quarter = 3
+  LEFT JOIN nlqp AS q4_nloc_profit
+       ON shop.id = Q4_NLOC_PROFIT.spoint_id
+   AND q4_nloc_profit.sale_quarter = 4
+  LEFT JOIN (
+        SELECT spoint_id, sum(profit) AS profit
+         FROM nlqp GROUP BY 1
+      ) AS year_nloc_profit
+      ON shop.id = year_nloc_profit.spoint_id
+ORDER BY 1;
+
+-----------------------------------------------------------------------------
+BEGIN;
+CREATE TEMPORARY TABLE nlqp_temp ON COMMIT DROP
+ AS
+      SELECT
+          spoint_id,
+          extract('quarter' from sale_time) as sale_quarter,
+          sum(sale_price) - sum(cost) AS profit,
+          count(*) AS nr_of_sales
+        FROM sale s
+        JOIN item_in_wh iw ON s.item_in_wh_id=iw.id
+        JOIN item i ON iw.item_id = i.id
+        JOIN salespoint sp ON s.spoint_id = sp.id
+        JOIN location sploc ON sp.loc_id = sploc.id
+        JOIN warehouse wh ON iw.whouse_id = wh.id
+        JOIN location whloc ON wh.loc_id = whloc.id
+       WHERE sale_time >= '2013-01-01'
+         AND sale_time <  '2014-01-01'
+         AND sploc.id != whloc.id
+       GROUP BY 1,2
+;
+
+-----------------------------------------------------------------------------
+SELECT shop.sp_name AS shop_name,
+       q1_NLP.profit as q1_profit,
+       q2_NLP.profit as q2_profit,
+       q3_NLP.profit as q3_profit,
+       q4_NLP.profit as q4_profit,
+       year_NLP.profit as year_profit
+  FROM (SELECT * FROM salespoint ORDER BY sp_name) AS shop
+  LEFT JOIN nlqp_temp AS q1_NLP
+      ON shop.id = Q1_NLP.spoint_id AND q1_NLP.sale_quarter = 1
+  LEFT JOIN nlqp_temp AS q2_NLP
+      ON shop.id = Q2_NLP.spoint_id AND q2_NLP.sale_quarter = 2
+  LEFT JOIN nlqp_temp AS q3_NLP
+      ON shop.id = Q3_NLP.spoint_id AND q3_NLP.sale_quarter = 3
+  LEFT JOIN nlqp_temp AS q4_NLP
+      ON shop.id = Q4_NLP.spoint_id AND q4_NLP.sale_quarter = 4
+  LEFT JOIN (
+        select spoint_id, sum(profit) AS profit FROM nlqp_temp GROUP BY 1
+      ) AS year_NLP
+      ON shop.id = year_NLP.spoint_id
+ORDER BY 1
+;
+COMMIT; -- here the temp table goes away
+
+
+-----------------------------------------------------------------------------
+CREATE MATERIALIZED VIEW nlqp_temp AS
+       SELECT spoint_id,
+            extract('quarter' from sale_time) as sale_quarter,
+            sum(sale_price) - sum(cost) AS profit,
+            count(*) AS nr_of_sales
+       FROM sale s
+       JOIN item_in_wh iw ON s.item_in_wh_id=iw.id
+       JOIN item i ON iw.item_id = i.id
+       JOIN salespoint sp ON s.spoint_id = sp.id
+       JOIN location sploc ON sp.loc_id = sploc.id
+       JOIN warehouse wh ON iw.whouse_id = wh.id
+       JOIN location whloc ON wh.loc_id = whloc.id
+            WHERE sale_time >= '2013-01-01'
+            AND sale_time <  '2014-01-01'
+            AND sploc.id != whloc.id
+            GROUP BY 1,2
+
+-----------------------------------------------------------------------------
+SET work_mem = '1TB';
+
+-----------------------------------------------------------------------------
+RESET work_mem;
+
+-----------------------------------------------------------------------------
+SET work_mem = '128MB';
+
+-----------------------------------------------------------------------------
+CREATE INDEX t1_a_b_ndx ON t1(a, b);
+
+-----------------------------------------------------------------------------
+CREATE INDEX t1_proc_ndx ON t1(i1)
+WHERE needs_processing = TRUE;
+
+-----------------------------------------------------------------------------
+SELECT id, ... WHERE needs_processing AND i1 = 5;
+
+-----------------------------------------------------------------------------
+CLUSTER t1_a_b_ndx ON t1;
+
+-----------------------------------------------------------------------------
+CLUSTER t1;
+
+-----------------------------------------------------------------------------
+CREATE TABLE measurement (
+logtime       TIMESTAMP NOT NULL,
+measures    JSONB NOT NULL);
+CREATE INDEX ON measurement USING BRIN (logtime);
+
+-----------------------------------------------------------------------------
+CREATE TABLE measurement (
+logtime       TIMESTAMP NOT NULL,
+    measures    JSONB NOT NULL
+ ) PARTITION BY RANGE (logtime);
+CREATE TABLE measurement_week1 PARTITION OF measurement
+ FOR VALUES FROM (‘2018-04-01’) TO (‘2018-05-01’);
+CREATE INDEX ON measurement_week1 USING BRIN (logtime); 
+CREATE TABLE measurement_week2 PARTITION OF measurement
+ FOR VALUES FROM (‘2018-05-01’) TO (‘2018-06-01’);
+CREATE INDEX ON measurement_week2 USING BRIN (logtime);
+etc
+
+-----------------------------------------------------------------------------
+CREATE EXTENSION tsm_system_time;
+CREATE SCHEMA fast_access_schema;
+CREATE VIEW tablename AS
+ SELECT * FROM data_schema TABLESAMPLE system_time(5000); --5 secs
+SET search_path = 'fast_access_schema, data_schema';
+
+-----------------------------------------------------------------------------
+ALTER TABLE t1 SET (fillfactor = 70);
+
+-----------------------------------------------------------------------------
+postgres=# ANALYZE;
+
+-----------------------------------------------------------------------------
+postgres=# EXPLAIN ANALYZE SELECT count(*) FROM itable WHERE id > 500;
+
+postgres=# SET enable_seqscan TO false;
+
+postgres=# EXPLAIN ANALYZE SELECT count(*) FROM itable WHERE id > 500;
+
+-----------------------------------------------------------------------------
+CREATE INDEX ON customer(id)
+ WHERE blocked = false AND subscription_status = 'paid';
+
+-----------------------------------------------------------------------------
+random_page_cost = 4; 
+seq_page_cost = 1;
+
+-----------------------------------------------------------------------------
+set random_page_cost = 2;
+
+-----------------------------------------------------------------------------
+CREATE STATISTICS cust_s1 (ndistinct, dependencies) ON state, area_code FROM cust;
+
+-----------------------------------------------------------------------------
+\timing
+SELECT count(*) FROM accounts;
+
+SET max_parallel_workers_per_gather = 8;
+SELECT count(*) FROM accounts;
+
+-----------------------------------------------------------------------------
+postgres=# EXPLAIN ANALYZE
+
+-----------------------------------------------------------------------------
+BEGIN;
+SELECT * FROM accounts WHERE holder_name ='BOB' FOR UPDATE;
+<do some calculations here>
+UPDATE accounts SET balance = 42.00 WHERE holder_name ='BOB';
+COMMIT;
+
+-----------------------------------------------------------------------------
+SELECT A.*, (A.*::text) AS old_acc_info
+FROM accounts a WHERE holder_name ='BOB';
+<do some calculations here>
+UPDATE accounts SET balance = 42.00
+WHERE holder_name ='BOB'
+AND (A.*::text) = <old_acc_info from select above>;
+
+-----------------------------------------------------------------------------
+UPDATE accounts
+ SET balance = balance - i_amount
+WHERE username = i_username
+AND balance - i_amount > - max_credit
+RETURNING balance;
+
+-----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION consume_balance
+( i_username text
+, i_amount numeric(10,2)
+, max_credit numeric(10,2)
+, OUT success boolean
+, OUT remaining_balance numeric(10,2)
+) AS
+$$
+BEGIN
+  UPDATE accounts SET balance = balance - i_amount
+  WHERE username = i_username
+  AND balance - i_amount > - max_credit
+  RETURNING balance
+  INTO remaining_balance;
+  IF NOT FOUND THEN
+    success := FALSE;
+    SELECT balance
+    FROM accounts
+    WHERE username = i_username
+    INTO remaining_balance;
+  ELSE
+    success := TRUE;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-----------------------------------------------------------------------------
+SELECT * FROM consume_balance ('bob', 7, 0);

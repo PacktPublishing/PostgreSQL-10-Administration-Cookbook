@@ -1,0 +1,437 @@
+{tablename}_{columnname(s)}_{suffix}
+
+------------------------------------------------------------
+{tablename}_{actionname}_{after|before}_trig
+
+------------------------------------------------------------
+ALTER INDEX badly_named_index RENAME TO tablename_status_idx;
+
+-------------------------------------------------------------
+CREATE TABLE "MyCust"
+AS
+SELECT * FROM cust;
+
+-------------------------------------------------------------
+postgres=# SELECT count(*) FROM mycust;
+
+-------------------------------------------------------------
+postgres=# SELECT count(*) FROM MyCust;
+
+-------------------------------------------------------------
+postgres=# SELECT count(*) FROM "MyCust";
+
+-------------------------------------------------------------
+SELECT * FROM mycust;
+
+-------------------------------------------------------------
+SELECT * FROM MYCUST;
+
+-------------------------------------------------------------
+SELECT * FROM MyCust;
+
+-------------------------------------------------------------
+SELECT * FROM "MyCust";
+
+-------------------------------------------------------------
+postgres=# SELECT quote_ident('MyCust');
+
+postgres=# SELECT quote_ident('mycust');
+
+-------------------------------------------------------------
+EXECUTE 'CREATE TEMP TABLE ' || quote_ident(tablename) ||
+                '(col1             INTEGER);'
+
+-------------------------------------------------------------
+CREATE SCHEMA s1;
+CREATE SCHEMA s2;
+CREATE TABLE s1.X(col1 integer,col2 TEXT); 
+CREATE TABLE s2.X(col1 integer,col3 NUMERIC);
+
+------------------------------------------------------------
+SELECT
+ table_schema
+,table_name
+,column_name
+,data_type
+  ||coalesce(' ' || text(character_maximum_length), '')
+  ||coalesce(' ' || text(numeric_precision), '')
+  ||coalesce(',' || text(numeric_scale), '')
+  as data_type
+FROM information_schema.columns
+WHERE column_name IN
+(SELECT
+ column_name
+FROM
+(SELECT
+  column_name
+ ,data_type
+ ,character_maximum_length
+ ,numeric_precision
+ ,numeric_scale
+ FROM information_schema.columns
+ WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+ GROUP BY
+  column_name
+ ,data_type
+ ,character_maximum_length
+ ,numeric_precision
+ ,numeric_scale
+) derived
+GROUP BY column_name
+HAVING count(*) > 1
+)
+AND table_schema NOT IN ('information_schema', 'pg_catalog')
+ORDER BY column_name
+;
+
+--------------------------------------------------------------
+WITH table_definition as
+( SELECT table_schema
+       , table_name
+       , string_agg( column_name || ' ' || data_type
+                   , ',' ORDER BY column_name
+                   ) AS def
+    FROM information_schema.columns
+   WHERE table_schema NOT IN ( 'information_schema'
+                             , 'pg_catalog')
+   GROUP BY table_schema
+          , table_name
+)
+  , unique_definition as
+( SELECT DISTINCT table_name
+       , def
+    FROM table_definition
+)
+   , multiple_definition as
+( SELECT table_name
+    FROM unique_definition
+   GROUP BY table_name
+  HAVING count( * ) > 1
+)
+SELECT table_schema
+     , table_name
+     , column_name
+     , data_type
+  FROM information_schema.columns
+ WHERE table_name
+       IN ( SELECT table_name
+              FROM multiple_definition )
+ ORDER BY table_name
+        , table_schema
+        , column_name
+;
+
+-----------------------------------------------------------
+CREATE OR REPLACE FUNCTION diff_table_definition
+(t1_schemaname text
+,t1_tablename text
+,t2_schemaname text
+,t2_tablename text)
+RETURNS TABLE
+(t1_column_name text
+,t1_data_type text
+,t2_column_name text
+,t2_data_type text
+)
+LANGUAGE SQL
+as
+$$
+SELECT
+ t1.column_name
+,t1.data_type
+,t2.column_name
+,t2.data_type
+FROM
+ (SELECT column_name, data_type
+  FROM information_schema.columns
+  WHERE table_schema = $1
+      AND table_name = $2
+ ) t1
+ FULL OUTER JOIN
+ (SELECT column_name, data_type
+  FROM information_schema.columns
+  WHERE table_schema = $3
+      AND table_name = $4
+ ) t2
+ ON t1.column_name = t2.column_name
+ AND t1.data_type = t2.data_type
+WHERE t1.column_name IS NULL OR t2.column_name IS NULL
+;
+$$;
+
+-------------------------------------------------------------
+postgres=# SELECT * FROM cust;
+
+-------------------------------------------------------------
+CREATE UNLOGGED TABLE dup_cust AS
+SELECT *
+FROM cust
+WHERE customerid IN 
+ (SELECT customerid
+  FROM cust
+  GROUP BY customerid
+  HAVING count(*) > 1);
+
+--------------------------------------------------------------
+UPDATE cust
+SET age = 47
+WHERE customerid = 4
+AND lastname = 'Palmer';
+
+--------------------------------------------------------------
+DELETE FROM cust
+WHERE customerid = 4
+AND lastname = 'Hall';
+
+--------------------------------------------------------------
+postgres=# SELECT * FROM new_cust;
+
+--------------------------------------------------------------
+BEGIN;
+
+--------------------------------------------------------------
+LOCK TABLE new_cust IN SHARE ROW EXCLUSIVE MODE;
+
+--------------------------------------------------------------
+CREATE TEMPORARY TABLE dups_cust AS 
+SELECT customerid, min(ctid) AS min_ctid 
+FROM new_cust 
+GROUP BY customerid 
+HAVING count(*) > 1;
+
+---------------------------------------------------------------
+DELETE FROM new_cust 
+USING dups_cust 
+WHERE new_cust.customerid = dups_cust.customerid 
+AND new_cust.ctid != dups_cust.min_ctid;
+
+----------------------------------------------------------------
+COMMIT;
+
+----------------------------------------------------------------
+VACUUM new_cust;
+
+----------------------------------------------------------------
+SELECT *
+FROM mytable
+WHERE  (col1, col2, ... ,colN) IN
+(SELECT col1, col2, ... ,colN
+ FROM mytable
+ GROUP BY  col1, col2, ... ,colN
+ HAVING count(*) > 1);
+
+----------------------------------------------------------------
+SELECT customerid, customer_name, ..., min(ctid) AS min_ctid 
+FROM ... 
+GROUP BY customerid, customer_name, ... 
+...;
+
+-----------------------------------------------------------------
+DELETE FROM new_cust 
+... 
+WHERE new_cust.customerid = dups_cust.customerid 
+AND new_cust.customer_name = dups_cust.customer_name 
+AND ... 
+AND new_cust.ctid != dups_cust.min_ctid;
+
+-----------------------------------------------------------------
+postgres=# SELECT * FROM newcust;
+
+-----------------------------------------------------------------
+ALTER TABLE newcust ADD PRIMARY KEY(customerid);
+
+-----------------------------------------------------------------
+ALTER TABLE newcust ADD UNIQUE(customerid);
+
+-----------------------------------------------------------------
+CREATE UNIQUE INDEX ON newcust (customerid);
+
+-----------------------------------------------------------------
+postgres=# SELECT * FROM partial_unique;
+
+-----------------------------------------------------------------
+CREATE UNIQUE INDEX ON partial_unique (customerid)
+   WHERE status = 'OPEN';
+
+-----------------------------------------------------------------
+postgres=# CREATE TABLE boxes (name text, position box);
+
+postgres=# INSERT INTO boxes VALUES
+                          ('First', box '((0,0), (1,1))');
+
+postgres=# INSERT INTO boxes VALUES
+                          ('Second', box '((2,0), (2,1))');
+
+postgres=# SELECT * FROM boxes;
+
+-----------------------------------------------------------------
+postgres=# ALTER TABLE boxes ADD EXCLUDE USING gist 
+                          (position WITH &&);
+
+------------------------------------------------------------------
+ALTER TABLE newcust ADD EXCLUDE (customerid WITH =);
+
+------------------------------------------------------------------
+CREATE TABLE t(id serial, descr text); 
+INSERT INTO t(descr) VALUES ('First value'); 
+INSERT INTO t(id,descr) VALUES (1,'Cheating!');
+
+------------------------------------------------------------------
+CREATE TABLE iprange
+ (iprange_start inet
+ ,iprange_stop inet
+ ,owner text);
+INSERT INTO iprange VALUES 
+        ('192.168.0.1','192.168.0.16', 'Simon');
+INSERT INTO iprange VALUES 
+        ('192.168.0.17','192.168.0.24', 'Gianni');
+INSERT INTO iprange VALUES 
+        ('192.168.0.32','192.168.0.64', 'Gabriele');
+
+------------------------------------------------------------------
+CREATE TYPE inetrange AS RANGE (SUBTYPE = inet);
+
+------------------------------------------------------------------
+CREATE TABLE iprange2
+(iprange inetrange
+,owner text);
+
+-------------------------------------------------------------------
+INSERT INTO iprange2
+VALUES ('[192.168.0.1,192.168.0.16]', 'Simon'); 
+INSERT INTO iprange2
+VALUES ('[192.168.0.17,192.168.0.24]', 'Gianni'); 
+INSERT INTO iprange2
+VALUES ('[192.168.0.32,192.168.0.64]', 'Gabriele');
+
+--------------------------------------------------------------------
+ALTER TABLE iprange2
+ ADD EXCLUDE USING GIST (iprange WITH &&);
+
+---------------------------------------------------------------------
+INSERT INTO iprange2
+VALUES ('[192.168.0.10,192.168.0.20]', 'Somebody else');
+
+---------------------------------------------------------------------
+postgres=# select * from ord;
+
+---------------------------------------------------------------------
+postgres=# analyze ord;
+
+---------------------------------------------------------------------
+postgres=# SELECT attname, n_distinct 
+                           FROM pg_stats
+                           WHERE schemaname = 'public' 
+                           AND tablename = 'ord';
+
+---------------------------------------------------------------------
+postgres=# SELECT num_of_values, count(*)
+            FROM (SELECT customerid, count(*) AS num_of_values
+                         FROM ord
+                         GROUP BY customerid) s
+            GROUP BY num_of_values
+            ORDER BY count(*);
+
+---------------------------------------------------------------------
+SELECT num_of_values, count(*)
+FROM (SELECT   customerid, orderid, amt
+              ,count(*) AS num_of_values
+               FROM ord
+               GROUP BY customerid, orderid, amt
+               ) s
+GROUP BY num_of_values
+ORDER BY count(*);
+
+---------------------------------------------------------------------
+postgres=# SELECT * FROM generate_series(1,5);
+
+---------------------------------------------------------------------
+postgres=# SELECT date(t)                     
+FROM generate_series(now(),
+  now() + '1 week', '1 day') AS f(t);
+
+---------------------------------------------------------------------
+(random()*(2*10^9))::integer
+
+---------------------------------------------------------------------
+(random()*(9*10^18))::bigint
+
+---------------------------------------------------------------------
+(random()*100.)::numeric(5,2)
+
+----------------------------------------------------------------------
+repeat('1',(random()*40)::integer)
+
+-----------------------------------------------------------------------
+(ARRAY['one','two','three'])[0.5+random()*3]
+
+-----------------------------------------------------------------------
+postgres=# SELECT key
+                        ,(random()*100.)::numeric(4,2)
+                        ,repeat('1',(random()*25)::integer)
+ FROM generate_series(1,10) AS f(key);
+
+-----------------------------------------------------------------------
+postgres=# SELECT key
+                         ,(random()*100.)::numeric(4,2)
+                         ,repeat('1',(random()*25)::integer)
+                         FROM generate_series(1,10) AS f(key)
+                         ORDER BY random() * 1.0;
+
+-----------------------------------------------------------------------
+postgres=# SELECT count(*) FROM mybigtable;
+
+postgres=# SELECT count(*) FROM mybigtable 
+                          TABLESAMPLE BERNOULLI(1);
+
+postgres=# SELECT count(*) FROM mybigtable 
+                          TABLESAMPLE BERNOULLI(1);
+
+-----------------------------------------------------------------------
+pg_dump –-exclude-table=mybigtable > db.dmp
+pg_dump –-table=mybigtable –-schema-only > mybigtable.schema
+psql -c '\copy (SELECT * FROM mybigtable 
+                    TABLESAMPLE BERNOULLI (1)) to mybigtable.dat' 
+
+-----------------------------------------------------------------------
+psql -f db.dmp 
+psql -f mybigtable.schema 
+psql -c '\copy mybigtable from mybigtable.dat'
+
+-----------------------------------------------------------------------
+"Key","Value" 
+1,"c" 
+2,"d"
+
+-----------------------------------------------------------------------
+postgres=# \COPY sample FROM sample.csv CSV HEADER
+postgres=# SELECT * FROM sample;
+
+-----------------------------------------------------------------------
+psql -c '\COPY sample FROM sample.csv CSV HEADER'
+
+-----------------------------------------------------------------------
+COPY sample FROM '/mydatafiledirectory/sample.csv' CSV HEADER;
+
+-----------------------------------------------------------------------
+LOAD CSV 
+   FROM 'GeoLiteCity-Blocks.csv' WITH ENCODING iso-646-us 
+        HAVING FIELDS 
+        ( 
+           startIpNum, endIpNum, locId 
+        ) 
+   INTO postgresql://user@localhost:54393/dbname?geolite.blocks 
+        TARGET COLUMNS 
+        ( 
+           iprange ip4r using (ip-range startIpNum endIpNum), 
+           locId 
+        ) 
+   WITH truncate, 
+        skip header = 2, 
+        fields optionally enclosed by '"', 
+        fields escaped by backslash-quote, 
+        fields terminated by '\t' 
+    SET work_mem to '32 MB', maintenance_work_mem to '64 MB';
+
+-----------------------------------------------------------------------
+pgloader --summary summary.log example.load

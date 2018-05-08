@@ -1,0 +1,381 @@
+CREATE USER username SUPERUSER;
+
+--------------------------------------------------------------------------
+ALTER USER username NOSUPERUSER;
+
+--------------------------------------------------------------------------
+ALTER USER username SUPERUSER;
+
+--------------------------------------------------------------------------
+REVOKE ALL ON table1 FROM user2;
+
+--------------------------------------------------------------------------
+REVOKE role3 FROM user2;
+
+--------------------------------------------------------------------------
+REVOKE role4 FROM user2;
+
+--------------------------------------------------------------------------
+CREATE TABLE table1( 
+... 
+); 
+GRANT SELECT ON table1 TO webreaders; 
+GRANT SELECT, INSERT, UPDATE, DELETE ON table1 TO editors; 
+GRANT ALL ON table1 TO admins;
+
+--------------------------------------------------------------------------
+pguser=# show search_path ;
+
+-------------------------------------------------------------------------
+pguser=# \d x
+
+-------------------------------------------------------------------------
+CREATE VIEW for_the_public AS 
+  SELECT * FROM reserved_data WHERE importance < 10; 
+GRANT SELECT ON for_the_public TO PUBLIC;
+
+-------------------------------------------------------------------------
+CREATE FUNCTION f(text) 
+RETURNS boolean 
+COST 0.00000001 
+LANGUAGE plpgsql AS $$ 
+BEGIN 
+  RAISE INFO '$1: %', $1; 
+  RETURN true; 
+END; 
+$$;
+
+-------------------------------------------------------------------------
+SELECT * FROM for_the_public x WHERE f(x :: text);
+
+-------------------------------------------------------------------------
+ALTER VIEW for_the_public SET (security_barrier = on);
+
+-------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA someschema TO somerole;
+GRANT SELECT, INSERT, UPDATE, DELETE ON someschema.sometable TO somerole; 
+GRANT somerole TO someuser, otheruser;
+
+-------------------------------------------------------------------------
+CREATE GROUP webreaders; 
+GRANT SELECT ON pages TO webreaders; 
+GRANT INSERT ON viewlog TO webreaders; 
+GRANT webreaders TO tim, bob;
+
+-------------------------------------------------------------------------
+GRANT INSERT, UPDATE, DELETE ON comments TO webreaders;
+
+-------------------------------------------------------------------------
+GRANT SELECT ON ALL TABLES IN SCHEMA staging TO bob;
+
+-------------------------------------------------------------------------
+CREATE TABLE someschema.sometable2(col1 int, col2 text);
+
+-------------------------------------------------------------------------
+GRANT SELECT, INSERT ON someschema.sometable2 TO somerole; 
+GRANT UPDATE (col2) ON someschema.sometable2 TO somerole;
+
+-------------------------------------------------------------------------
+SET ROLE TO somerole; 
+INSERT INTO someschema.sometable2 VALUES (1, 'One'); 
+SELECT * FROM someschema.sometable2 WHERE col1 = 1;
+
+-------------------------------------------------------------------------
+UPDATE someschema.sometable2 SET col2 = 'The number one'; 
+
+-------------------------------------------------------------------------
+UPDATE someschema.sometable2 SET col1 = 2;
+
+-------------------------------------------------------------------------
+SELECT * FROM t;
+
+-------------------------------------------------------------------------
+GRANT SELECT ON TABLE t TO u;
+
+-------------------------------------------------------------------------
+GRANT SELECT (c1,c2,c3) ON TABLE t TO u;
+
+-------------------------------------------------------------------------
+  GRANT SELECT ON someschema.sometable2 TO somerole; 
+        REVOKE SELECT (col1) ON someschema.sometable2 FROM    
+        somerole;
+
+-------------------------------------------------------------------------
+CREATE TABLE someschema.sometable3(col1 int, col2 text);
+
+-------------------------------------------------------------------------
+ALTER TABLE someschema.sometable3 ENABLE ROW LEVEL SECURITY;
+
+-------------------------------------------------------------------------
+GRANT SELECT ON someschema.sometable3 TO somerole;
+
+-------------------------------------------------------------------------
+SELECT * FROM someschema.sometable3;
+
+-------------------------------------------------------------------------
+CREATE POLICY example1 ON someschema.sometable3
+FOR SELECT
+TO somerole
+USING (col1 > 0);
+
+-------------------------------------------------------------------------
+SELECT * FROM someschema.sometable3;
+
+-------------------------------------------------------------------------
+CREATE POLICY example2 ON someschema.sometable3
+FOR INSERT
+TO somerole
+WITH CHECK (col1 > 0);
+
+-------------------------------------------------------------------------
+GRANT INSERT ON someschema.sometable3 TO somerole;
+SELECT * FROM someschema.sometable3;
+
+-------------------------------------------------------------------------
+INSERT INTO someschema.sometable3 VALUES (2, 'Two');
+SELECT * FROM someschema.sometable3;
+
+-------------------------------------------------------------------------
+CREATE USER bob;
+CREATE USER alice CREATEDB;
+
+-------------------------------------------------------------------------
+pguser=# \du alice
+
+-------------------------------------------------------------------------
+pguser=# alter user bob nologin;
+
+-------------------------------------------------------------------------
+pguser=# alter user bob connection limit 0;
+
+-------------------------------------------------------------------------
+pguser=# alter user bob connection limit 10;
+
+-------------------------------------------------------------------------
+pguser=# alter user bob connection limit -1;
+
+-------------------------------------------------------------------------
+SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity a
+   JOIN pg_roles r ON a.usename = r.rolname AND NOT rolcanlogin;
+
+-------------------------------------------------------------------------
+testdb=# drop user bob;
+
+-------------------------------------------------------------------------
+pguser=# alter user bob nologin;
+
+-------------------------------------------------------------------------
+pguser=# GRANT bob TO bobs_replacement;
+
+-------------------------------------------------------------------------
+REASSIGN OWNED BY bob TO bobs_replacement;
+
+-------------------------------------------------------------------------
+test2=# select usename,passwd from pg_shadow where passwd
+not like ‘SCRAM%’ or passwd is null;
+
+-------------------------------------------------------------------------
+test2=# SET password_encryption = ‘scram-sha-256’;
+test2=# ALTER USER bob ENCRYPTED PASSWORD ‘whatever’;
+
+-------------------------------------------------------------------------
+ALTER ROLE BOB WITH CREATEDB;
+
+-------------------------------------------------------------------------
+ALTER ROLE BOB WITH CREATEROLE;
+
+-------------------------------------------------------------------------
+test2=# create table lines(line text);
+
+-------------------------------------------------------------------------
+test2=# SET ROLE to bob;
+
+-------------------------------------------------------------------------
+test2=> copy lines from ‘/home/bob/names.txt’;
+
+-------------------------------------------------------------------------
+create or replace function copy_from(tablename text, filepath text) 
+returns void 
+security definer 
+as 
+$$ 
+ declare 
+ begin 
+      execute 'copy ' || quote_ident(tablename) 
+                 || ' from ' || quote_literal(filepath) ; 
+ end; 
+$$ language plpgsql;
+
+-------------------------------------------------------------------------
+revoke all on function copy_from( text,  text) from public; 
+grant execute on function copy_from( text,  text) to bob;
+
+-------------------------------------------------------------------------
+create or replace function debugging_info_on() 
+returns void 
+security definer 
+as 
+$$ 
+  begin 
+   set client_min_messages to 'DEBUG1'; 
+   set log_min_messages to 'DEBUG1'; 
+   set log_error_verbosity to 'VERBOSE'; 
+   set log_min_duration_statement to 0; 
+ end; 
+$$ language plpgsql; 
+revoke all on function debugging_info_on() from public; 
+grant execute on function debugging_info_on() to bob;
+
+-------------------------------------------------------------------------
+create or replace function debugging_info_reset() 
+returns void 
+security definer 
+as 
+$$ 
+  begin 
+   set client_min_messages to DEFAULT; 
+   set log_min_messages to DEFAULT; 
+   set log_error_verbosity to DEFAULT; 
+   set log_min_duration_statement to DEFAULT; 
+ end; 
+$$ language plpgsql;
+
+-------------------------------------------------------------------------
+log_statement  =  'ddl'
+
+-------------------------------------------------------------------------
+pgaudit.log = 'role, ddl'
+
+-------------------------------------------------------------------------
+pgaudit.log_catalog = off
+pgaudit.log_relation = off
+pgaudit.log_statement_once = on
+
+-------------------------------------------------------------------------
+pgaudit.log_relation = on
+pgaudit.log_statement_once = off
+
+-------------------------------------------------------------------------
+pgaudit.role = ‘investigator’
+
+-------------------------------------------------------------------------
+GRANT INSERT, UPDATE, DELETE on <vulnerable_table> TO investigator;
+
+-------------------------------------------------------------------------
+pgbench -i
+
+-------------------------------------------------------------------------
+SELECT  audit.audit_table('pgbench_accounts');
+
+-------------------------------------------------------------------------
+pgbench -t 1000
+
+-------------------------------------------------------------------------
+cookbook=# SELECT count(*) FROM audit.logged_actions;
+
+-------------------------------------------------------------------------
+cookbook=# \x on
+
+-------------------------------------------------------------------------
+cookbook=# SELECT * FROM audit.logged_actions LIMIT 1;
+
+-------------------------------------------------------------------------
+postgres=# select current_user, session_user;
+
+postgres=# set role to bob;
+
+-------------------------------------------------------------------------
+postgres=# create user alice noinherit;
+
+postgres=# create user bob noinherit; 
+
+-------------------------------------------------------------------------
+postgres=# create group sales; 
+
+postgres=# create group marketing; 
+
+postgres=# grant postgres to marketing; 
+
+-------------------------------------------------------------------------
+postgres=# grant sales to alice; 
+
+postgres=# grant marketing to alice; 
+
+postgres=# grant sales to bob; 
+
+-------------------------------------------------------------------------
+chmod 0600 ~/.postgresql/postgresql.key
+
+-------------------------------------------------------------------------
+map-name system-username database-username
+
+-------------------------------------------------------------------------
+salesmap   /^(.*)@sales\.comp\.com$      \1 
+salesmap   /^(.*)@sales\.comp\.com$   sales 
+salesmap   manager@sales.comp.com    auditor
+
+-------------------------------------------------------------------------
+create or replace function get_my_public_key() returns text as $$ 
+return open('/home/pguser/public.key').read() 
+$$ 
+language plpythonu; 
+revoke all on function get_my_public_key() from public; 
+create or replace function get_my_secret_key() returns text as $$ 
+return open('/home/pguser/secret.key').read() 
+$$ 
+language plpythonu; 
+revoke all on function get_my_secret_key() from public;
+
+-------------------------------------------------------------------------
+create or replace function encrypt_using_my_public_key( 
+    cleartext text, 
+    ciphertext out bytea 
+) 
+AS $$ 
+DECLARE 
+    pubkey_bin bytea; 
+BEGIN 
+    -- text version of public key needs to be passed through function dearmor() to get to raw key 
+    pubkey_bin := dearmor(get_my_public_key()); 
+
+    ciphertext := pgp_pub_encrypt(cleartext, pubkey_bin); 
+END; 
+$$ language plpgsql security definer; 
+revoke all on function encrypt_using_my_public_key(text) from public; 
+grant execute on function encrypt_using_my_public_key(text) to bob;
+
+-------------------------------------------------------------------------
+create or replace function decrypt_using_my_secret_key( 
+    ciphertext bytea, 
+    cleartext out text 
+) 
+AS $$ 
+DECLARE 
+    secret_key_bin bytea; 
+BEGIN 
+    -- text version of secret key needs to be passed through function dearmor() to get to raw binary key 
+    secret_key_bin := dearmor(get_my_secret_key()); 
+
+    cleartext := pgp_pub_decrypt(ciphertext, secret_key_bin); 
+END; 
+$$ language plpgsql security definer; 
+revoke all on function decrypt_using_my_secret_key(bytea) from public; 
+grant execute on function decrypt_using_my_secret_key(bytea) to bob;
+
+-------------------------------------------------------------------------
+test2=# select encrypt_using_my_public_key(‘X marks the spot!’);
+
+-------------------------------------------------------------------------
+encrypt_using_my_public_key |
+\301\301N\003\223o\215\2125\203\252;\020\007\376-z\233\211H...
+
+-------------------------------------------------------------------------
+test2=# select decrypt_using_my_secret_key(encrypt_using_my_public_key(‘X marks the spot!’));
+
+
+
+
+
+
+

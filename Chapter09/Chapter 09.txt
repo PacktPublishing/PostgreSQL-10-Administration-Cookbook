@@ -1,0 +1,328 @@
+autovacuum = on 
+track_counts = on 
+
+--------------------------------------------------------------------
+vacuum_cost_page_dirty
+vacuum_cost_page_hit
+vacuum_cost_page_miss
+vacuum_cost_delay
+vacuum_cost_limit
+vacuum_freeze_min_age
+vacuum_freeze_table_age
+vacuum_multixact_freeze_min_age
+vacuum_multixact_freeze_table_age
+
+--------------------------------------------------------------------
+autovacuum
+autovacuum_work_mem
+autovacuum_max_workers
+autovacuum_naptime
+autovacuum_vacuum_scale_factor
+autovacuum_vacuum_threshold
+autovacuum_analyze_scale_factor
+autovacuum_analyze_threshold
+autovacuum_vacuum_cost_delay
+autovacuum_vacuum_cost_limit
+autovacuum_freeze_max_age
+autovacuum_multixact_freeze_max_age
+log_autovacuum_min_duration
+
+--------------------------------------------------------------------
+ALTER TABLE mytable SET (storage_parameter = value);
+
+--------------------------------------------------------------------
+autovacuum_enabled
+autovacuum_vacuum_cost_delay
+autovacuum_vacuum_cost_limit
+autovacuum_vacuum_scale_factor
+autovacuum_vacuum_threshold
+autovacuum_freeze_min_age
+autovacuum_freeze_max_age
+autovacuum_freeze_table_age
+autovacuum_multixact_freeze_min_age
+autovacuum_multixact_freeze_max_age
+autovacuum_multixact_freeze_table_age
+autovacuum_analyze_scale_factor
+autovacuum_analyze_threshold
+log_autovacuum_min_duration
+
+--------------------------------------------------------------------
+2010-04-29 01:33:55 BST (13130) LOG:  automatic vacuum of table "postgres.public.pgbench_accounts": index scans: 1 
+      pages: 0 removed, 3279 remain 
+      tuples: 100000 removed, 100000 remain 
+      system usage: CPU 0.19s/0.36u sec elapsed 19.01 sec 
+2010-04-29 01:33:59 BST (13130) LOG:  automatic analyze of table "postgres.public.pgbench_accounts" 
+      system usage: CPU 0.06s/0.18u sec elapsed 3.66 sec 
+
+--------------------------------------------------------------------
+ALTER TABLE big_table SET (autovacuum_enabled = off);
+
+--------------------------------------------------------------------
+ALTER TABLE pgbench_accounts
+SET ( toast.autovacuum_enabled = off);
+
+--------------------------------------------------------------------
+postgres=# 
+SELECT n.nspname
+, c.relname
+, array_to_string(
+    c.reloptions ||
+ARRAY(
+SELECT 'toast.' || x
+FROM unnest(tc.reloptions) AS x
+), ', ')
+AS relopts
+FROM pg_class c
+LEFT JOIN pg_class tc    ON c.reltoastrelid = tc.oid
+JOIN pg_namespace n ON c.relnamespace  = n.oid
+WHERE c.relkind = 'r'
+AND nspname NOT IN ('pg_catalog', 'information_schema');
+
+--------------------------------------------------------------------
+include 'autovacuum.conf'
+
+--------------------------------------------------------------------
+autovacuum = on
+autovacuum_max_workers = 3
+include 'autovacuum.conf'
+
+--------------------------------------------------------------------
+autovacuum_analyze_scale_factor = 0.1 
+autovacuum_analyze_threshold = 50 
+autovacuum_vacuum_cost_delay = 30 
+autovacuum_vacuum_cost_limit = -1
+autovacuum_vacuum_scale_factor = 0.2
+autovacuum_vacuum_threshold = 50  
+
+--------------------------------------------------------------------
+autovacuum_analyze_scale_factor = 0.05 
+autovacuum_analyze_threshold = 50 
+autovacuum_vacuum_cost_delay = 10 
+autovacuum_vacuum_cost_limit = -1 
+autovacuum_vacuum_scale_factor = 0.1 
+autovacuum_vacuum_threshold = 50 
+
+--------------------------------------------------------------------
+$ ln -sf autovacuum.conf.night autovacuum.conf
+$ pg_ctl reload
+
+--------------------------------------------------------------------
+VACUUM (DISABLE_PAGE_SKIPPING);
+
+--------------------------------------------------------------------
+initdb --data-checksums
+
+--------------------------------------------------------------------
+postgres=# SELECT now() -
+  CASE
+  WHEN backend_xid IS NOT NULL
+  THEN xact_start
+  ELSE query_start END
+  AS age
+, pid
+, backend_xid AS xid
+, backend_xmin AS xmin
+, state
+FROM  pg_stat_activity
+WHERE backend_type = 'client backend'
+ORDER BY 1 DESC;
+
+--------------------------------------------------------------------
+SHOW max_prepared_transactions;
+
+--------------------------------------------------------------------
+postgres=# SELECT * FROM pg_prepared_xacts;
+
+--------------------------------------------------------------------
+COMMIT PREPARED 'prep1';
+
+--------------------------------------------------------------------
+ROLLBACK PREPARED 'prep1';
+
+--------------------------------------------------------------------
+postgres=# SELECT l.locktype, x.database, l.relation, l.page, l.tuple,l.classid, l.objid, l.objsubid, l.mode, x.transaction, x.gid, x.prepared, x.owner
+FROM pg_locks l JOIN pg_prepared_xacts x ON l.virtualtransaction = ‘-1/’ || x.transaction::text;
+
+--------------------------------------------------------------------
+postgres=# SELECT DISTINCT x.database, l.relation FROM pg_locks l JOIN pg_prepared_xacts x ON l.virtualtransaction = ‘-1/’ || x.transaction::text WHERE l.locktype != ‘transactionid’; database | relation
+
+--------------------------------------------------------------------
+SELECT * FROM table WHERE xmax = 121083;
+
+--------------------------------------------------------------------
+postgres=# SELECT relname, pg_relation_size(oid) FROM pg_class
+WHERE relkind in ('i','r') AND relnamespace = 'pg_catalog'::regnamespace
+ORDER BY 2 DESC;
+
+--------------------------------------------------------------------
+CREATE OR REPLACE VIEW av_needed AS 
+SELECT N.nspname, C.relname 
+, pg_stat_get_tuples_inserted(C.oid) AS n_tup_ins 
+, pg_stat_get_tuples_updated(C.oid) AS n_tup_upd 
+, pg_stat_get_tuples_deleted(C.oid) AS n_tup_del 
+, CASE WHEN pg_stat_get_tuples_updated(C.oid) > 0 
+       THEN pg_stat_get_tuples_hot_updated(C.oid)::real 
+          / pg_stat_get_tuples_updated(C.oid) 
+       END 
+  AS HOT_update_ratio 
+, pg_stat_get_live_tuples(C.oid) AS n_live_tup 
+, pg_stat_get_dead_tuples(C.oid) AS n_dead_tup 
+, C.reltuples AS reltuples 
+, round( current_setting('autovacuum_vacuum_threshold')::integer 
+       + current_setting('autovacuum_vacuum_scale_factor')::numeric 
+       * C.reltuples) 
+  AS av_threshold 
+, date_trunc('minute', 
+    greatest(pg_stat_get_last_vacuum_time(C.oid), 
+             pg_stat_get_last_autovacuum_time(C.oid))) 
+  AS last_vacuum 
+, date_trunc('minute', 
+    greatest(pg_stat_get_last_analyze_time(C.oid), 
+             pg_stat_get_last_analyze_time(C.oid))) 
+  AS last_analyze 
+, pg_stat_get_dead_tuples(C.oid) > 
+  round( current_setting('autovacuum_vacuum_threshold')::integer 
+       + current_setting('autovacuum_vacuum_scale_factor')::numeric 
+       * C.reltuples) 
+  AS av_needed 
+, CASE WHEN reltuples > 0 
+       THEN round(100.0 * pg_stat_get_dead_tuples(C.oid) / reltuples) 
+       ELSE 0 END 
+  AS pct_dead 
+FROM pg_class C 
+LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace) 
+WHERE C.relkind IN ('r', 't', 'm') 
+  AND N.nspname NOT IN ('pg_catalog', 'information_schema') 
+  AND N.nspname NOT LIKE 'pg_toast%' 
+ORDER BY av_needed DESC, n_dead_tup DESC; 
+
+--------------------------------------------------------------------
+postgres=# \x  
+postgres=# SELECT * FROM av_needed WHERE nspname = 'public' AND relname = 'pgbench_accounts';
+
+--------------------------------------------------------------------
+SELECT
+nspname,relname,
+round(100 * pg_relation_size(indexrelid) /
+                    pg_relation_size(indrelid)) / 100
+                AS index_ratio,     
+  pg_size_pretty(pg_relation_size(indexrelid))
+                AS index_size,
+  pg_size_pretty(pg_relation_size(indrelid))
+                AS table_size
+FROM pg_index I
+LEFT JOIN pg_class C ON (C.oid = I.indexrelid)
+LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
+WHERE
+  nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND
+  C.relkind='i' AND 
+  pg_relation_size(indrelid) > 0;
+
+--------------------------------------------------------------------
+test=> SELECT * FROM pgstattuple('pg_catalog.pg_proc');
+
+--------------------------------------------------------------------
+Postgres=# select * from pgstattuple_approx('pgbench_accounts');
+
+--------------------------------------------------------------------
+postgres=> SELECT * FROM pgstatindex('pg_cast_oid_index');
+
+--------------------------------------------------------------------
+postgres=# SELECT * FROM pg_stat_progress_vacuum WHERE pid = 34399;
+
+--------------------------------------------------------------------
+$ vacuumdb --jobs=4 --all
+
+--------------------------------------------------------------------
+$ reindexdb
+
+--------------------------------------------------------------------
+DROP  TABLE  IF  EXISTS  test; CREATE  TABLE  test
+(id  INTEGER  PRIMARY  KEY
+,category  TEXT
+,  value  TEXT);
+CREATE  INDEX  ON  test  (category);
+
+--------------------------------------------------------------------
+SELECT oid, relname, relfilenode
+        FROM pg_class
+        WHERE oid in (SELECT indexrelid
+                      FROM pg_index
+                      WHERE indrelid = 'test'::regclass);
+
+--------------------------------------------------------------------
+CREATE INDEX CONCURRENTLY new_index
+ ON test (category);
+BEGIN;
+DROP INDEX test_category_idx;
+ALTER INDEX new_index RENAME TO test_category_idx;
+COMMIT;
+
+--------------------------------------------------------------------
+SELECT oid, relname, relfilenode
+FROM pg_class
+WHERE oid in (SELECT indexrelid
+                FROM pg_index
+                WHERE indrelid = 'test'::regclass);
+
+--------------------------------------------------------------------
+ALTER TABLE ... ADD PRIMARY KEY USING INDEX ...
+
+--------------------------------------------------------------------
+postgres=# CREATE TABLE ft(fk int PRIMARY KEY, fs text);
+
+postgres=# CREATE TABLE pt(pk int, ps text);
+
+postgres=# INSERT INTO ft(fk,fs) VALUES (1,'one'), (2,'two');
+
+postgres=# INSERT INTO pt(pk,ps) VALUES (1,'I'), (2,'II'), (3,'III');
+
+--------------------------------------------------------------------
+postgres=# ALTER TABLE pt ADD CONSTRAINT pc FOREIGN KEY (pk) REFERENCES ft(fk);
+
+--------------------------------------------------------------------
+postgres=# ALTER TABLE pt ADD CONSTRAINT pc FOREIGN KEY (pk) REFERENCES ft(fk) NOT VALID;
+
+--------------------------------------------------------------------
+postgres=# \d pt
+
+--------------------------------------------------------------------
+postgres=# ALTER TABLE pt VALIDATE CONSTRAINT pc;
+
+--------------------------------------------------------------------
+postgres=# DELETE FROM pt WHERE pk = 3;
+
+postgres=# ALTER TABLE pt VALIDATE CONSTRAINT pc;
+
+postgres=# \d pt
+
+--------------------------------------------------------------------
+postgres=# SELECT schemaname, relname, indexrelname, idx_scan FROM pg_stat_user_indexes ORDER BY idx_scan;
+
+--------------------------------------------------------------------
+SELECT ir.relname AS indexname 
+, it.relname AS tablename 
+, n.nspname AS schemaname 
+FROM pg_index i 
+JOIN pg_class ir ON ir.oid = i.indexrelid 
+JOIN pg_class it ON it.oid = i.indrelid 
+JOIN pg_namespace n ON n.oid = it.relnamespace 
+WHERE NOT i.indisvalid; 
+
+--------------------------------------------------------------------
+CREATE  OR  REPLACE  FUNCTION  trial_drop_index(iname  TEXT) RETURNS  VOID
+LANGUAGE  SQL  AS  $$ UPDATE  pg_index
+SET  indisvalid  =  false
+WHERE  indexrelid  =  $1::regclass;
+$$;
+
+--------------------------------------------------------------------
+CREATE  OR  REPLACE  FUNCTION  trial_undrop_index(iname  TEXT) RETURNS  VOID
+LANGUAGE  SQL  AS  
+$$ UPDATE  pg_index
+SET  indisvalid  =  true
+WHERE  indexrelid  =  $1::regclass;
+$$;
+
+
+

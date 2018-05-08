@@ -1,0 +1,316 @@
+max_wal_size = 20GB 
+checkpoint_timeout = 3600
+
+---------------------------------------------------------------------------------
+pg_dump -F c pgbench > dumpfile
+
+---------------------------------------------------------------------------------
+pg_dump -F c -f dumpfile pgbench
+
+---------------------------------------------------------------------------------
+pg_dump -v
+
+---------------------------------------------------------------------------------
+pg_restore --schema-only -v dumpfile 2>/dev/null | head | grep Started
+-- Started on 2017-06-03 09:05:46 BST
+
+---------------------------------------------------------------------------------
+pg_dumpall -g
+
+---------------------------------------------------------------------------------
+pg_dumpall --schema-only > myscriptdump.sql
+
+---------------------------------------------------------------------------------
+pg_dumpall --roles-only > myroles.sql
+
+---------------------------------------------------------------------------------
+pg_dumpall --tablespaces-only > mytablespaces.sql
+
+---------------------------------------------------------------------------------
+pg_dumpall --globals-only > myglobals.sql
+
+---------------------------------------------------------------------------------
+pg_restore --schema-only mydumpfile > myscriptdump.sql
+
+---------------------------------------------------------------------------------
+cd $PGDATA
+mkdir ../standalone
+
+---------------------------------------------------------------------------------
+mkdir ../standalone/archive
+
+---------------------------------------------------------------------------------
+pg_receivewal -D ../standalone/archive/
+
+---------------------------------------------------------------------------------
+archive_mode  =  on
+archive_command  =  'test  !  -f  ../standalone/archiving_active  ||
+cp  -i  %p  ../standalone/archive/%f'
+
+---------------------------------------------------------------------------------
+cd $PGDATA
+mkdir ../standalone/archive
+touch ../standalone/archiving_active
+
+---------------------------------------------------------------------------------
+BACKUP_FILENAME=$(date  '+%Y%m%d%H%M').tar
+
+---------------------------------------------------------------------------------
+psql -c "select pg_start_backup('standalone')"
+
+---------------------------------------------------------------------------------
+tar -cv --exclude="pg_wal/*" \
+-f ../standalone/$BACKUP_FILENAME *
+
+---------------------------------------------------------------------------------
+psql -c "select pg_stop_backup(), current_timestamp"
+
+---------------------------------------------------------------------------------
+rm ../standalone/archiving_active
+
+---------------------------------------------------------------------------------
+cd ../standalone
+tar -rf $BACKUP_FILENAME archive
+
+---------------------------------------------------------------------------------
+echo "restore_command = 'cp archive/%f %p'" > recovery.conf
+echo "recovery_end_command = 'rm -R archive' " >> recovery.conf
+
+---------------------------------------------------------------------------------
+tar -rf $BACKUP_FILENAME recovery.conf
+
+---------------------------------------------------------------------------------
+rm -rf archive recovery.conf
+
+---------------------------------------------------------------------------------
+archive_mode = on 
+archive_command = 'rsync -a %p $DRNODE:/archive/%f'
+
+---------------------------------------------------------------------------------
+BACKUP_NAME=$(date '+%Y%m%d%H%M')
+
+---------------------------------------------------------------------------------
+psql -c "select pg_start_backup('$BACKUP_NAME')"
+
+---------------------------------------------------------------------------------
+rsync -cva --inplace -exclude='pg_wal/*' \
+${PGDATA}/     $DRNODE:/backups/base/$BACKUP_NAME/
+
+---------------------------------------------------------------------------------
+psql -c "select pg_stop_backup(), current_timestamp"  
+
+---------------------------------------------------------------------------------
+pg_restore --schema-only -v dumpfile | head | grep Started
+
+---------------------------------------------------------------------------------
+psql -f myglobals.sql
+
+---------------------------------------------------------------------------------
+pg_restore -C -d postgres -j 4 dumpfile
+
+---------------------------------------------------------------------------------
+head myscriptdump.sql | grep Started 
+
+---------------------------------------------------------------------------------
+psql -f myglobals.sql  
+
+---------------------------------------------------------------------------------
+psql -f myscriptdump.sql  
+
+---------------------------------------------------------------------------------
+head myscriptdump.sql | grep Started 
+
+---------------------------------------------------------------------------------
+psql -f myscriptdump.sql 
+
+---------------------------------------------------------------------------------
+$ cat backup_label
+START WAL LOCATION: 0/12000020 (file 000000010000000000000012)
+CHECKPOINT LOCATION: 0/12000058
+START TIME: 2017-06-03 19:53:23 BST
+LABEL: standalone
+
+---------------------------------------------------------------------------------
+restore_command = 'scp backup1:/backups/pg/servername/archive/%f 
+  %p' 
+
+---------------------------------------------------------------------------------
+SELECT pg_create_restore_point('before_critical_update');
+
+---------------------------------------------------------------------------------
+pg_restore -t mydroppedtable dumpfile | psql
+
+---------------------------------------------------------------------------------
+pg_restore -a -t mydamagedtable dumpfile >     mydamagedtable.sql
+
+---------------------------------------------------------------------------------
+BEGIN;
+TRUNCATE mydamagedtable;
+\i mydamagedtable.sql
+COMMIT;
+
+---------------------------------------------------------------------------------
+psql -f repair_mydamagedtable.sql
+
+---------------------------------------------------------------------------------
+CREATE DATABASE restorework;
+
+---------------------------------------------------------------------------------
+pg_restore -s -d restorework dumpfile
+
+---------------------------------------------------------------------------------
+pg_dump -t mydroppedtable -s restorework >   mydroppedtable.sql
+
+---------------------------------------------------------------------------------
+psql -f mydroppedtable.sql
+
+---------------------------------------------------------------------------------
+pg_restore -t mydroppedtable -a -d maindb dumpfile
+
+---------------------------------------------------------------------------------
+psql -f myscriptdump.sql
+
+---------------------------------------------------------------------------------
+pg_dump -t mydroppedtable -F c mydatabase > dumpfile
+
+---------------------------------------------------------------------------------
+pg_restore -d mydatabase -j 2 dumpfile
+
+---------------------------------------------------------------------------------
+pg_dump -t mydroppedtable -F c mydatabase > dumpfile
+
+---------------------------------------------------------------------------------
+pg_restore -d mydatabase -j 2 dumpfile
+
+---------------------------------------------------------------------------------
+pg_restore -h myhost -d postgres --create -j 4 dumpfile
+
+---------------------------------------------------------------------------------
+createdb -h myhost myfreshdb
+psql -h myhost -f myscriptdump.sql myfreshdb
+
+---------------------------------------------------------------------------------
+psql -f myscriptdump.sql
+
+---------------------------------------------------------------------------------
+export PGOPTIONS ="-c work_mem = 128000"
+
+---------------------------------------------------------------------------------
+pg_restore -j NumJobs
+
+---------------------------------------------------------------------------------
+yum install barman  
+
+---------------------------------------------------------------------------------
+apt-get install barman  
+
+---------------------------------------------------------------------------------
+compression = gzip
+
+---------------------------------------------------------------------------------
+[angus] 
+description =  "PostgreSQL Database on angus" 
+active = off 
+archiver = on 
+backup_method = rsync 
+ssh_command = ssh postgres@angus 
+conninfo = host=angus user=barman dbname=postgres
+
+---------------------------------------------------------------------------------
+[root@malcolm]# barman list-server
+angus - PostgreSQL Database on angus (inactive)
+
+---------------------------------------------------------------------------------
+[root@malcolm]# barman show-server angus
+
+Server angus (inactive):
+active: False
+archive_command: None
+archive_mode: None
+     incoming_wals_directory:     
+     /var/lib/barman/angus/incoming
+
+---------------------------------------------------------------------------------
+[root@malcolm]#
+
+barman check angus
+Server angus (inactive):
+  WAL archive: FAILED (please make sure WAL    shipping is setup)
+  PostgreSQL: OK
+  superuser: OK
+  wal_level: FAILED (please set it to a higher level than 'minimal')
+  directories: OK
+  retention policy settings: OK
+  backup maximum age: OK (no last_backup_maximum_age provided)
+  compression settings: OK
+  failed backups: OK (there are 0 failed backups)
+  minimum redundancy requirements: OK (have 0 backups, expected at least 0)
+  ssh: OK (PostgreSQL server)
+  not in recovery: OK
+  archive_mode: FAILED (please set it to 'on' or 'always')
+  archive_command: FAILED (please set it accordingly to documentation)
+  archiver errors: OK
+
+[root@malcolm]# echo $?
+1
+
+---------------------------------------------------------------------------------
+archive_mode = on
+archive_command = 'rsync -a %p      barman@malcolm:/var/lib/barman/angus/incoming/%f'
+ 
+wal_level = replica
+
+---------------------------------------------------------------------------------
+[root@malcolm]# barman -q check angus 
+[root@malcolm]# echo $?
+0
+
+---------------------------------------------------------------------------------
+[root@malcolm]# barman switch-wal --force --archive angus
+[root@malcolm]# barman archive-wal angus
+
+---------------------------------------------------------------------------------
+[root@malcolm]# barman backup angus
+Starting backup using rsync-exclusive method for server angus in /var/lib/barman/angus/base/20171003T194717
+Backup start at xlog location: 0/3000028 (000000010000000000000003, 00000028)
+This is the first backup for server angus
+WAL segments preceding the current backup have been found:
+  000000010000000000000001 from server angus has been removed
+Copying files.
+Copy done.
+This is the first backup for server angus
+Asking PostgreSQL server to finalize the backup.
+Backup size: 21.1 MiB
+Backup end at xlog location: 0/3000130 (000000010000000000000003, 00000130)
+Backup completed
+Processing xlog segments from file archival for angus
+  000000010000000000000002
+  000000010000000000000003
+  000000010000000000000003.00000028.backup
+
+---------------------------------------------------------------------------------
+[root@malcolm ~]# cat /etc/cron.d/barman
+# m h  dom mon dow   user     command
+  * *    *   *   *   barman   [ -x /usr/bin/barman ] && /usr/bin/barman -q cron
+
+---------------------------------------------------------------------------------
+[root@malcolm ~]# barman list-backup angus
+
+---------------------------------------------------------------------------------
+[root@malcolm ~]# barman show-backup angus 
+
+---------------------------------------------------------------------------------
+barman show-backup bon last 
+
+---------------------------------------------------------------------------------
+PGDATA directory  : /var/lib/pgsql/10/data
+
+---------------------------------------------------------------------------------
+barman recover --remote-ssh-command 'ssh postgres@brian' bon last /var/lib/pgsql/9.6/data 
+
+---------------------------------------------------------------------------------
+systemctl start postgresql-10
+
+---------------------------------------------------------------------------------
+systemctl start postgresql 
+

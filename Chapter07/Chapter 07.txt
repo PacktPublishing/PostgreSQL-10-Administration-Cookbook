@@ -1,0 +1,920 @@
+BEGIN;command 1;command 2;command 3;COMMIT;
+
+-----------------------------------------------------------------------------------
+DROP VIEW IF EXISTS cust_view;
+
+-----------------------------------------------------------------------------------
+CREATE OR REPLACE VIEW cust_view AS SELECT * FROM cust;
+
+-----------------------------------------------------------------------------------
+postgres=# CREATE OR REPLACE VIEW cust_view AS 
+SELECT col as title1 FROM cust;
+
+postgres=# CREATE OR REPLACE VIEW cust_view 
+AS SELECT col as title2 FROM cust;
+
+------------------------------------------------------------------------------------
+postgres=# BEGIN;
+
+postgres=# CREATE TABLE a(x int);
+
+postgres=# BEGIN;
+
+postgres=# CREATE TABLE b(x int);
+
+postgres=# COMMIT;
+
+postgres=# ROLLBACK;
+
+------------------------------------------------------------------------------------
+(begin transaction T1)
+  (statement 1)
+  (begin transaction T2)
+    (statement 2)
+  (commit transaction T2)
+  (statement 3)
+(commit transaction t1)
+
+------------------------------------------------------------------------------------
+BEGIN;
+  – (statement 1)
+  SAVEPOINT T2;
+    – (statement 2)
+  RELEASE SAVEPOINT T2; /* we assume that statement 2 does not fail */
+  – (statement 3)
+COMMIT;
+
+------------------------------------------------------------------------------------
+$ $EDITOR test.sql
+mistake1;
+mistake2;
+mistake3;
+
+------------------------------------------------------------------------------------
+$ psql -f test.sql
+
+------------------------------------------------------------------------------------
+$ psql -f test.sql -v ON_ERROR_STOP=on
+
+------------------------------------------------------------------------------------
+$ $EDITOR test.sql
+\set ON_ERROR_STOP on
+mistake1;
+mistake2;
+mistake3;
+
+------------------------------------------------------------------------------------
+$ psql -f test.sql -v ON_ERROR_STOP
+
+------------------------------------------------------------------------------------
+$ $EDITOR ~/.psqlrc
+\set ON_ERROR_STOP
+
+------------------------------------------------------------------------------------
+ALTER TABLE mytable ADD COLUMN mycol text;
+UPDATE mytable SET mycol = 'myval';
+
+-------------------------------------------------------------------------------------
+psql -f vartest.sql
+
+-------------------------------------------------------------------------------------
+\set tabname mytable
+\set colname mycol
+\set colval 'myval'
+ALTER TABLE :tabname ADD COLUMN :colname text;
+UPDATE :tabname SET :colname = :'colval';
+
+-------------------------------------------------------------------------------------
+psql -v tabname=mytab2 -f vartest.sql
+
+-------------------------------------------------------------------------------------
+\prompt 'Insert the table name: ' tabname
+
+-------------------------------------------------------------------------------------
+SELECT schemaname
+, relname
+, n_dead_tup
+, n_live_tup
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC
+LIMIT 1
+\gset
+\qecho Running VACUUM on table :"relname" in schema :"schemaname"
+\qecho Rows before: :n_dead_tup dead, :n_live_tup live
+VACUUM ANALYZE :schemaname.:relname;
+\qecho Waiting 1 second...
+SELECT pg_sleep(1);
+SELECT n_dead_tup AS n_dead_tup_now
+,      n_live_tup AS n_live_tup_now
+FROM pg_stat_user_tables
+WHERE schemaname = :'schemaname'
+AND relname = :'relname'
+\gset
+\qecho Rows after: :n_dead_tup_now dead, :n_live_tup_now live
+
+--------------------------------------------------------------------------------------
+SELECT schemaname
+, relname
+, n_dead_tup
+, n_live_tup
+, n_dead_tup > 0 AS needs_vacuum
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC
+LIMIT 1
+\gset
+\if :needs_vacuum
+\qecho Running VACUUM on table :"relname" in schema :"schemaname"
+\qecho Rows before: :n_dead_tup dead, :n_live_tup live
+VACUUM ANALYZE :schemaname.:relname;
+\qecho Waiting 1 second...
+SELECT pg_sleep(1);
+SELECT n_dead_tup AS n_dead_tup_now
+,      n_live_tup AS n_live_tup_now
+FROM pg_stat_user_tables
+WHERE schemaname = :'schemaname' AND relname = :'relname'
+\gset
+\qecho Rows after: :n_dead_tup_now dead, :n_live_tup_now live
+\else
+\qecho Skipping VACUUM on table :"relname" in schema :"schemaname"
+\endif
+
+--------------------------------------------------------------------------------------
+SELECT /* add a termination condition as appropriate */ AS do_loop
+\gset
+\if do_loop
+\ir file.sql
+\endif
+
+--------------------------------------------------------------------------------------
+postgres=# \set VERBOSITY terse
+postgres=# \set CONTEXT never
+postgres=# select * from missingtable;
+
+--------------------------------------------------------------------------------------
+postgres=# \set VERBOSITY verbose
+postgres=# \set CONTEXT errors
+postgres=# select * from missingtable;
+
+--------------------------------------------------------------------------------------
+postgres=# create table wrongname(); 
+
+--------------------------------------------------------------------------------------
+postgres=# \errverbose
+
+--------------------------------------------------------------------------------------
+postgres=# create schema test;
+
+postgres=# create table test.a (col1 INTEGER);
+
+postgres=# create table test.b (col1 INTEGER);
+
+postgres=# create table test.c (col1 INTEGER);
+
+-------------------------------------------------------------------------------------
+ALTER TABLE X 
+ADD COLUMN last_update_timestamp TIMESTAMP WITH TIME ZONE;
+
+-------------------------------------------------------------------------------------
+postgres=# SELECT relname
+              FROM pg_class c
+              JOIN pg_namespace n
+              ON c.relnamespace = n.oid
+              WHERE n.nspname = 'test';
+
+-------------------------------------------------------------------------------------
+postgres=# \t on
+        postgres=# \o multi.sql
+        postgres=# SELECT 'ALTER TABLE '|| n.nspname
+              || '.' || c.relname ||
+        ' ADD COLUMN last_update_timestamp TIMESTAMP WITH TIME ZONE;'
+        FROM pg_class c
+        JOIN pg_namespace n
+        ON c.relnamespace = n.oid
+        WHERE n.nspname = 'test';
+        \o
+
+--------------------------------------------------------------------------------------
+ postgres=# \! cat multi.sql
+         ALTER TABLE test.a ADD COLUMN  
+         last_update_timestamp TIMESTAMP WITH TIME ZONE;
+         ALTER TABLE test.b ADD COLUMN 
+         last_update_timestamp TIMESTAMP WITH TIME ZONE;
+         ALTER TABLE test.c ADD COLUMN 
+         last_update_timestamp TIMESTAMP WITH TIME ZONE;
+
+---------------------------------------------------------------------------------------
+postgres=# \i multi.sql
+
+---------------------------------------------------------------------------------------
+DO $$
+DECLARE t record;
+BEGIN
+    FOR t IN SELECT c.*, n.nspname
+           FROM pg_class c JOIN pg_namespace n
+           ON c.relnamespace = n.oid
+           WHERE n.nspname = 'test' /* ; not needed */
+    LOOP
+           EXECUTE 'ALTER TABLE '|| quote_ident(t.nspname) ||
+            '.' || quote_ident(t.relname) ||
+             ' ADD COLUMN last_update_timestamp ' ||
+            'TIMESTAMP WITH TIME ZONE';
+    END LOOP;
+END $$;
+
+-----------------------------------------------------------------------------------------
+\t on
+\o script-:i.sql
+SELECT sql FROM (
+SELECT 'ALTER TABLE '|| n.nspname || '.' || c.relname ||
+' ADD COLUMN last_update_timestamp TIMESTAMP WITH TIME ZONE   DEFAULT now();' as sql
+,row_number() OVER (ORDER BY pg_relation_size(c.oid))
+FROM pg_class c
+ JOIN pg_namespace n
+ ON c.relnamespace = n.oid
+WHERE n.nspname = 'test'
+ORDER BY 2 DESC) as s
+WHERE row_number % 2 = :i;
+\o
+
+-----------------------------------------------------------------------------------------
+$ psql -v i=0 -f make-script.sql
+$ psql -v i=1 -f make-script.sql
+
+-----------------------------------------------------------------------------------------
+$ psql -f script-0.sql &
+$ psql -f script-1.sql &
+
+-----------------------------------------------------------------------------------------
+WHERE row_number % N = i;
+
+-----------------------------------------------------------------------------------------
+ALTER TABLE mytable
+ADD COLUMN last_update_timestamp TIMESTAMP WITHOUT TIME ZONE;
+
+-----------------------------------------------------------------------------------------
+ALTER TABLE mytable
+DROP COLUMN last_update_timestamp;
+
+------------------------------------------------------------------------------------------
+ALTER TABLE mytable
+DROP COLUMN IF EXISTS last_update_timestamp,ADD COLUMN last_update_timestamp TIMESTAMP WITHOUT TIME ZONE;
+
+------------------------------------------------------------------------------------------
+UPDATE mytable SET last_update_timestamp = NULL;
+
+------------------------------------------------------------------------------------------
+ALTER TABLE mytable 
+ADD COLUMN last_update_userid INTEGER DEFAULT 0,ADD COLUMN last_update_comment TEXT;
+
+------------------------------------------------------------------------------------------
+ALTER TABLE x 
+DROP COLUMN  last_update_timestamp
+CASCADE;
+
+------------------------------------------------------------------------------------------
+SELECT *
+FROM pg_stat_activity
+WHERE pg_blocking_pids(pid) @> array[pid1]
+ORDER BY state_change;
+
+------------------------------------------------------------------------------------------
+postgres=# select * from birthday;
+
+-------------------------------------------------------------------------------------------
+CREATE TABLE birthday
+( name       TEXT, dob        INTEGER);
+
+--------------------------------------------------------------------------------------------
+postgres=# ALTER TABLE birthday
+postgres-# ALTER COLUMN dob SET DATA TYPE text;
+ALTER TABLE
+
+--------------------------------------------------------------------------------------------
+postgres=# ALTER TABLE birthday
+postgres-# ALTER COLUMN dob SET DATA TYPE integer;
+
+--------------------------------------------------------------------------------------------
+postgres=# ALTER TABLE birthday
+               ALTER COLUMN dob SET DATA TYPE integer
+               USING dob::integer;
+
+--------------------------------------------------------------------------------------------
+postgres=# ALTER TABLE birthday
+ALTER COLUMN dob SET DATA TYPE date
+USING date(to_date(dob::text, 'YYMMDD') -
+      (CASE WHEN dob/10000 BETWEEN 16 AND 69 THEN interval '100 
+        years'
+       ELSE interval '0' END));
+
+---------------------------------------------------------------------------------------------
+postgres=# select * from birthday;
+
+---------------------------------------------------------------------------------------------
+ALTER TABLE foo
+ALTER COLUMN col DROP DEFAULT;
+ALTER TABLE foo
+ALTER COLUMN col SET DEFAULT 'expression';
+ALTER TABLE foo
+ALTER COLUMN col SET NOT NULL;
+ALTER TABLE foo
+ALTER COLUMN col DROP NOT NULL;
+
+----------------------------------------------------------------------------------------------
+postgres=# ALTER TABLE birthday
+ALTER COLUMN dob SET DATA TYPE date
+USING date(to_date(dob::text, 'YYMMDD') -
+      (CASE WHEN dob/10000 BETWEEN 16 AND 69
+      THEN interval '100 years'
+      ELSE interval '0' END));
+
+-----------------------------------------------------------------------------------------------
+postgres=# select * from cust;
+
+-----------------------------------------------------------------------------------------------
+postgres=# select * from cust;
+
+-----------------------------------------------------------------------------------------------
+ALTER TABLE cust ADD COLUMN custname text NOT NULL DEFAULT '';
+UPDATE cust SET custname = firstname || ' ' || lastname;
+ALTER TABLE cust DROP COLUMN firstname;
+ALTER TABLE cust DROP COLUMN lastname;
+
+------------------------------------------------------------------------------------------------
+BEGIN;
+ALTER TABLE cust
+  ALTER COLUMN firstname SET DATA TYPE text
+        USING firstname || ' ' || lastname,
+  ALTER COLUMN firstname SET NOT NULL,
+  ALTER COLUMN firstname SET DEFAULT '', 
+  DROP COLUMN lastname;
+ALTER TABLE cust RENAME firstname TO custname;
+COMMIT;
+
+------------------------------------------------------------------------------------------------
+CREATE TYPE satellites_urani AS ENUM ('titania','oberon');
+
+------------------------------------------------------------------------------------------------
+CREATE TYPE node AS 
+( node_name text,
+  connstr text,
+  standbys text[]);
+
+--------------------------------------------------------------------------------------------------
+ALTER TYPE satellites_urani RENAME VALUE ‘titania’ TO 'Titania'; 
+ALTER TYPE satellites_urani RENAME VALUE ‘oberon’ TO 'Oberon';
+
+-------------------------------------------------------------------------------------------------
+ALTER TYPE satellites_urani ADD VALUE 'Ariel' BEFORE 'Titania';
+ALTER TYPE satellites_urani ADD VALUE 'Umbriel' AFTER 'Ariel';
+
+-------------------------------------------------------------------------------------------------
+ALTER TYPE node
+RENAME ATTRIBUTE slaves TO standbys;
+
+-------------------------------------------------------------------------------------------------
+ALTER TYPE node
+DROP ATTRIBUTE standbys,
+ADD ATTRIBUTE async_standbys text[],
+ADD ATTRIBUTE sync_standbys text[];
+
+-------------------------------------------------------------------------------------------------
+UPDATE mytable SET mynode = mynode :: text :: node;
+
+-------------------------------------------------------------------------------------------------
+CREATE SCHEMA sharedschema;
+
+-------------------------------------------------------------------------------------------------
+CREATE SCHEMA sharedschema AUTHORIZATION scarlett;
+
+-------------------------------------------------------------------------------------------------
+CREATE SCHEMA AUTHORIZATION scarlett;
+
+-------------------------------------------------------------------------------------------------
+DROP SCHEMA str;
+
+-------------------------------------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS str;
+
+-------------------------------------------------------------------------------------------------
+CREATE TABLE str.tb (x int);
+
+-------------------------------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS newschema;
+CREATE SCHEMA newschema;
+
+-------------------------------------------------------------------------------------------------
+DROP SCHEMA IF EXISTS newschema CASCADE;
+
+-------------------------------------------------------------------------------------------------
+CREATE SCHEMA foo
+       CREATE TABLE account
+       (id         INTEGER NOT NULL PRIMARY KEY
+       ,balance     NUMERIC(50,2))
+       CREATE VIEW accountsample AS
+       SELECT *
+       FROM account
+       WHERE random() < 0.1;
+
+---------------------------------------------------------------------------------------------------
+GRANT SELECT ON ALL TABLES IN SCHEMA sharedschema TO PUBLIC;
+
+---------------------------------------------------------------------------------------------------
+ALTER DEFAULT PRIVILEGES IN SCHEMA sharedschema
+GRANT SELECT ON TABLES TO PUBLIC;
+
+---------------------------------------------------------------------------------------------------
+ALTER TABLE cust
+SET SCHEMA anotherschema;
+
+---------------------------------------------------------------------------------------------------
+ALTER SCHEMA existingschema RENAME TO anotherschema;
+
+---------------------------------------------------------------------------------------------------
+CREATE TABLESPACE new_tablespace
+LOCATION '/usr/local/pgsql/new_tablespace';
+
+---------------------------------------------------------------------------------------------------
+DROP TABLESPACE new_tablespace;
+
+---------------------------------------------------------------------------------------------------
+SELECT spcname
+      ,relname
+      ,CASE WHEN relpersistence = 't' THEN 'temp '
+            WHEN relpersistence = 'u' THEN 'unlogged '
+       ELSE '' END ||
+       CASE
+       WHEN relkind = 'r' THEN 'table'
+       WHEN relkind = 'p' THEN 'partitioned table'
+       WHEN relkind = 'f' THEN 'foreign table'
+       WHEN relkind = 't' THEN 'TOAST table'
+       WHEN relkind = 'v' THEN 'view'
+       WHEN relkind = 'm' THEN 'materialized view'
+       WHEN relkind = 'S' THEN 'sequence'
+       WHEN relkind = 'c' THEN 'type'
+       ELSE 'index' END as objtype
+FROM pg_class c join pg_tablespace ts
+ON (CASE WHEN c.reltablespace = 0 THEN
+         (SELECT dattablespace FROM pg_database
+          WHERE datname = current_database())
+    ELSE c.reltablespace END) = ts.oid
+WHERE relname NOT LIKE 'pg_toast%'
+AND relnamespace NOT IN
+    (SELECT oid FROM pg_namespace
+     WHERE nspname IN ('pg_catalog', 'information_schema'))
+;
+
+---------------------------------------------------------------------------------------------------
+ALTER TABLESPACE new_tablespace OWNER TO eliza;
+
+---------------------------------------------------------------------------------------------------
+ALTER USER eliza SET default_tablespace = 'new_tablespace';
+
+---------------------------------------------------------------------------------------------------
+[postgres@myhost ~]$ pg_ctl stop
+
+---------------------------------------------------------------------------------------------------
+[postgres@myhost ~]$ mv $PGDATA/pg_wal  /mnt/newdisk/
+
+---------------------------------------------------------------------------------------------------
+[postgres@myhost ~]$ ln -s /mnt/newdisk/pg_wal    $PGDATA/pg_wal 
+
+---------------------------------------------------------------------------------------------------
+[postgres@myhost ~]$ pg_ctl start
+
+---------------------------------------------------------------------------------------------------
+[postgres@myhost ~]$ psql -c 'CREATE TABLE pg_wal (x int)'
+
+---------------------------------------------------------------------------------------------------
+ALTER TABLESPACE new_tablespace SET 
+(seq_page_cost = 0.05, random_page_cost = 0.1);
+
+---------------------------------------------------------------------------------------------------
+ALTER TABLE mytable SET TABLESPACE new_tablespace;
+
+---------------------------------------------------------------------------------------------------
+ALTER INDEX mytable_val_idx SET TABLESPACE new_tablespace;
+
+---------------------------------------------------------------------------------------------------
+BEGIN;
+ALTER TABLE mytable SET TABLESPACE new_tablespace;
+ALTER INDEX mytable_val1_idx SET TABLESPACE new_tablespace;
+ALTER INDEX mytable_val2_idx SET TABLESPACE new_tablespace;
+COMMIT;
+
+---------------------------------------------------------------------------------------------------
+SET default_tablespace = 'new_tablespace';
+
+---------------------------------------------------------------------------------------------------
+ALTER DATABASE mydb SET default_tablespace = 'new_tablespace';
+
+---------------------------------------------------------------------------------------------------
+ALTER DATABASE mydb SET TABLESPACE new_tablespace;
+
+---------------------------------------------------------------------------------------------------
+SELECT i.relname as index_name
+     , tsi.spcname as index_tbsp
+     , t.relname as table_name
+     , tst.spcname as table_tbsp
+  FROM ( pg_class t /* tables */
+         JOIN pg_tablespace tst
+           ON t.reltablespace = tst.oid
+           OR ( t.reltablespace = 0
+                AND tst.spcname = 'pg_default' )
+       )
+  JOIN pg_index pgi
+    ON pgi.indrelid = t.oid
+  JOIN ( pg_class i /* indexes */
+         JOIN pg_tablespace tsi
+           ON i.reltablespace = tsi.oid
+           OR ( i.reltablespace = 0
+                AND tsi.spcname = 'pg_default' )
+       )
+    ON pgi.indexrelid = i.oid
+ WHERE i.relname NOT LIKE 'pg_toast%'
+   AND i.reltablespace != t.reltablespace
+;
+
+---------------------------------------------------------------------------------------------------
+postgres=# \d y
+
+---------------------------------------------------------------------------------------------------
+postgres=# CREATE FOREIGN DATA WRAPPER postgresql 
+ VALIDATOR postgresql_fdw_validator;
+
+postgres=# CREATE SERVER otherdb
+ FOREIGN DATA WRAPPER postgresql
+ OPTIONS (host 'foo', dbname 'otherdb', port '5432');
+
+postgres=# CREATE USER MAPPING FOR PUBLIC
+SERVER otherdb;
+---------------------------------------------------------------------------------------------------
+SELECT dblink_connect('otherdb');
+
+---------------------------------------------------------------------------------------------------
+postgres=#  INSERT  INTO  audit_log  VALUES  (current_user,  now());
+
+---------------------------------------------------------------------------------------------------
+postgres=#  SELECT  dblink_exec('INSERT  INTO  audit_log  VALUES'  ||
+     '  (current_user,  now())',  true);
+
+---------------------------------------------------------------------------------------------------
+SELECT generate_series(1,3)
+
+---------------------------------------------------------------------------------------------------
+SELECT *  
+        FROM dblink('SELECT generate_series(1,3)')
+
+---------------------------------------------------------------------------------------------------
+ SELECT * 
+       FROM dblink('SELECT generate_series(1,3)') 
+         AS link(col1 integer);
+
+---------------------------------------------------------------------------------------------------
+SELECT dblink_disconnect();
+
+---------------------------------------------------------------------------------------------------
+postgres=# CREATE EXTENSION postgres_fdw;
+
+---------------------------------------------------------------------------------------------------
+postgres=# \dew
+
+---------------------------------------------------------------------------------------------------
+postgres=# CREATE SERVER otherdb 
+        FOREIGN DATA WRAPPER postgres_fdw 
+        OPTIONS (host 'foo', dbname 'otherdb', port '5432');
+
+---------------------------------------------------------------------------------------------------
+postgres=# CREATE USER MAPPING FOR PUBLIC SERVER otherdb;
+
+---------------------------------------------------------------------------------------------------
+ postgres=# CREATE FOREIGN TABLE ft ( 
+            num int , 
+            word text ) 
+          SERVER otherdb 
+          OPTIONS ( 
+            schema_name 'public' , 
+            table_name 't' );
+
+---------------------------------------------------------------------------------------------------
+   postgres=# select * from ft;
+
+---------------------------------------------------------------------------------------------------
+postgres=# insert into ft(num,word) values     
+        (1,'One'), (2,'Two'),(3,'Three');
+
+---------------------------------------------------------------------------------------------------
+postgres=# select * from ft;
+
+---------------------------------------------------------------------------------------------------
+postgres=# SELECT dblink_open('example',
+      'SELECT generate_series(1,3)', true);
+
+postgres=# SELECT *
+      FROM dblink_fetch('example', 10, true)
+       AS link (col1 integer);
+
+---------------------------------------------------------------------------------------------------
+postgres=# SELECT * 
+      FROM dblink_fetch('example', 10, true)
+      AS link (col1 integer);
+
+postgres=# SELECT dblink_close('example');
+
+---------------------------------------------------------------------------------------------------
+CREATE TABLE my_local_copy (LIKE my_foreign_table);
+
+---------------------------------------------------------------------------------------------------
+SELECT * FROM ft WHERE num = 2;
+
+---------------------------------------------------------------------------------------------------
+SELECT * 
+ FROM dblink('otherdb', 
+      'SELECT * FROM bigtable') AS link ( ... )
+ WHERE filtercolumn > 100;
+
+---------------------------------------------------------------------------------------------------
+SELECT * 
+FROM dblink('otherdb', 
+     'SELECT * FROM bigtable' ||
+     ' WHERE filtercolumn > 100') AS link ( ... );
+
+---------------------------------------------------------------------------------------------------
+CREATE FUNCTION my_task(VOID)
+RETURNS SETOF text AS $$
+      CONNECT 'dbname=myremoteserver';
+      SELECT my_task();
+$$ LANGUAGE plproxy;
+
+---------------------------------------------------------------------------------------------------
+CREATE FUNCTION get_cust_email(p_username text)
+RETURNS SETOF text AS $$
+      CONNECT 'dbname=myremoteserver';
+      SELECT email FROM users WHERE username = p_username;
+$$ LANGUAGE plproxy;
+
+---------------------------------------------------------------------------------------------------
+CREATE FUNCTION get_cust_email(p_username text)
+RETURNS SETOF text AS $$
+      CLUSTER 'mycluster';
+      RUN ON hashtext(p_username);
+      SELECT email FROM users WHERE username = p_username;
+$$ LANGUAGE plproxy;
+
+---------------------------------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS oracle_fdw;
+
+---------------------------------------------------------------------------------------------------
+CREATE SERVER myserv
+        FOREIGN DATA WRAPPER oracle_fdw
+        OPTIONS (dbserver '//myhost/MYDB');
+        CREATE USER MAPPING FOR myuser
+        SERVER myserv;
+
+---------------------------------------------------------------------------------------------------
+CREATE FOREIGN TABLE mytab(id bigint, descr text)
+    SERVER myserv
+    OPTIONS (user 'scott', password 'tiger');
+
+---------------------------------------------------------------------------------------------------
+ INSERT INTO mytab VALUES (-1, 'Minus One');
+
+---------------------------------------------------------------------------------------------------
+SELECT * FROM mytab WHERE id = -1;
+
+---------------------------------------------------------------------------------------------------
+postgres=# SELECT * FROM cust;
+
+---------------------------------------------------------------------------------------------------
+CREATE VIEW cust_view AS
+SELECT customerid
+      ,firstname
+      ,lastname
+      ,age
+FROM cust;
+
+---------------------------------------------------------------------------------------------------
+CREATE VIEW cust_avg AS
+SELECT avg(age)
+FROM cust;
+CREATE VIEW cust_above_avg_age AS
+SELECT customerid
+            ,substr(firstname, 1, 20) as fname
+            ,substr(lastname, 1, 20) as lname
+            ,age - 
+            (SELECT avg(age)::integer
+            FROM cust) as years_above_avg
+FROM cust
+WHERE age > 
+     (SELECT avg(age)
+      FROM cust);
+
+CREATE VIEW potential_spammers AS
+SELECT customerid, spam_score(firstname,lastname)
+FROM cust
+ORDER BY spam_score(firstname,lastname) DESC
+LIMIT 100;
+
+---------------------------------------------------------------------------------------------------
+CREATE TABLE mountains_m
+( name text primary key
+, meters int not null
+);
+
+---------------------------------------------------------------------------------------------------
+CREATE VIEW mountains AS
+SELECT *, ROUND(meters / 0.3048) AS feet
+FROM mountains_m
+ORDER BY meters DESC;
+
+---------------------------------------------------------------------------------------------------
+INSERT INTO mountains(name, meters)
+VALUES ('Everest', 8848);
+TABLE mountains;
+
+---------------------------------------------------------------------------------------------------
+INSERT INTO mountains(name, feet)
+VALUES ('K2', 28251);
+
+---------------------------------------------------------------------------------------------------
+CREATE RULE mountains_ins_rule AS
+ON INSERT TO mountains DO INSTEAD
+INSERT INTO mountains_m 
+VALUES (NEW.name, COALESCE (NEW.meters, NEW.feet * 0.3048));
+
+---------------------------------------------------------------------------------------------------
+INSERT INTO mountains(name, feet)
+VALUES ('K 2', 28251);
+INSERT INTO mountains(name, meters)
+VALUES ('Kangchenjunga', 8586);
+TABLE mountains;
+
+---------------------------------------------------------------------------------------------------
+UPDATE mountains SET name = 'K2' WHERE name = 'K 2';
+TABLE mountains;
+
+UPDATE mountains SET feet = 29064 WHERE name = 'K2';
+
+----------------------------------------------------------------------------------------------------
+CREATE RULE mountains_upd_rule AS
+ON UPDATE TO mountains DO INSTEAD
+UPDATE mountains_m
+SET name = NEW.name, meters =
+CASE
+WHEN NEW.meters != OLD.meters
+THEN NEW.meters
+WHEN NEW.feet != OLD.feet
+THEN NEW.feet * 0.3048
+ELSE OLD.meters
+END
+WHERE name = OLD.name;
+UPDATE mountains SET feet = 29064 WHERE name = 'K2';
+TABLE mountains;
+
+--------------------------------------------------------------------------------------------------
+UPDATE mountains SET meters = 8611 WHERE name = 'K2';
+TABLE mountains;
+
+---------------------------------------------------------------------------------------------------
+CREATE FUNCTION mountains_tf()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+IF TG_OP = 'INSERT' THEN
+INSERT INTO mountains_m VALUES (NEW.name,
+CASE
+ WHEN NEW.meters IS NULL
+ THEN NEW.feet * 0.3048
+ ELSE NEW.meters
+ END );
+ELSIF TG_OP = 'UPDATE' THEN
+UPDATE mountains_m
+SET name = NEW.name, meters =
+CASE
+WHEN NEW.meters != OLD.meters
+THEN NEW.meters
+WHEN NEW.feet != OLD.feet
+THEN NEW.feet * 0.3048
+ELSE OLD.meters
+END
+WHERE name = OLD.name;
+END IF;
+RETURN NEW;
+END;
+$$;
+CREATE TRIGGER mountains_tg
+INSTEAD OF INSERT OR UPDATE ON mountains
+FOR EACH ROW
+EXECUTE PROCEDURE mountains_tf();
+
+-------------------------------------------------------------------------------------------------
+CREATE VIEW cust_minor AS 
+SELECT customerid
+ ,firstname
+,lastname
+,age
+FROM cust
+WHERE age < 18;
+
+--------------------------------------------------------------------------------------------------
+CREATE RULE cust_minor_update AS
+ON  update TO cust_minor
+WHERE new.age < 18
+DO INSTEAD
+UPDATE cust SET
+ firstname = new.firstname
+,lastname = new.lastname
+,age = new.age
+WHERE customerid = old.customerid;
+
+--------------------------------------------------------------------------------------------------
+CREATE RULE cust_minor_update_dummy AS ON    
+update TO cust_minor
+DO INSTEAD NOTHING;
+CREATE RULE cust_minor_update_conditional AS
+ON   update TO cust_minor
+WHERE new.age < 18
+DO INSTEAD
+UPDATE cust SET firstname = new.firstname
+,lastname = new.lastname
+,age = new.age
+WHERE customerid = old.customerid;
+
+--------------------------------------------------------------------------------------------------
+UPDATE cust_minor SET age = 19 WHERE customerid = 123;
+
+--------------------------------------------------------------------------------------------------
+CREATE VIEW cust_view AS
+SELECT customerid
+      ,firstname
+      ,lastname
+      ,age
+FROM cust;
+
+---------------------------------------------------------------------------------------------------
+CREATE TABLE cust_view AS SELECT * FROM cust WHERE false;
+
+---------------------------------------------------------------------------------------------------
+postgres # CREATE RULE "_RETURN" AS
+                ON SELECT TO cust_view
+                DO INSTEAD 
+                SELECT * FROM cust;
+
+postgres # CREATE TRIGGER cust_view_modify_after_trig
+                AFTER INSERT OR UPDATE OR DELETE ON cust_view
+                FOR EACH ROW
+                EXECUTE PROCEDURE cust_view_modify_trig_proc();
+
+--------------------------------------------------------------------------------------------------
+postgres # DROP TABLE cust_view;
+
+postgres # DROP VIEW cust_view;
+
+--------------------------------------------------------------------------------------------------
+CREATE TABLE dish
+( dish_id SERIAL PRIMARY KEY
+, dish_description text
+);
+
+CREATE TABLE eater
+( eater_id SERIAL
+, eating_date date
+, dish_id int REFERENCES dish (dish_id)
+);
+INSERT INTO dish (dish_description)
+VALUES ('Lentils'), ('Mango'), ('Plantain'), ('Rice'), ('Tea');
+
+INSERT INTO eater(eating_date, dish_id)
+SELECT floor(abs(sin(n)) * 365) :: int + date '2014-01-01'
+, ceil(abs(sin(n :: float * n))*5) :: int
+FROM generate_series(1,500000) AS rand(n);
+
+--------------------------------------------------------------------------------------------------
+CREATE VIEW v_dish AS
+SELECT dish_description, count(*)
+FROM dish JOIN eater USING (dish_id)
+GROUP BY dish_description
+ORDER BY 1;
+
+--------------------------------------------------------------------------------------------------
+SELECT * FROM v_dish;
+
+--------------------------------------------------------------------------------------------------
+CREATE MATERIALIZED VIEW m_dish AS
+SELECT dish_description, count(*)
+FROM dish JOIN eater USING (dish_id)
+GROUP BY dish_description
+ORDER BY 1;
+
+--------------------------------------------------------------------------------------------------
+SELECT * FROM m_dish;
+
+--------------------------------------------------------------------------------------------------
+REFRESH MATERIALIZED VIEW m_dish;
+
+--------------------------------------------------------------------------------------------------
+CREATE UNLOGGED TABLE m_dish AS SELECT * FROM v_dish;
+
+
+
+

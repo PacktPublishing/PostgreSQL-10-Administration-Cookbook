@@ -1,0 +1,207 @@
+net start postgres
+
+-----------------------------------------------------------------
+pg_ctl -D datadir stop -m immediate
+
+-----------------------------------------------------------------
+pg_ctl -D /var/lib/pgsql/data reload
+
+-----------------------------------------------------------------
+postgres=# select pg_reload_conf();
+
+-----------------------------------------------------------------
+postgres=#  SELECT name, setting, unit
+                         ,(source = 'default') as is_default
+            FROM pg_settings
+            WHERE context = 'sighup'
+            AND (name like '%delay' or name like '%timeout')
+            AND setting != '0';
+
+-----------------------------------------------------------------
+kill -SIGHUP   pid
+
+-----------------------------------------------------------------
+kill -SIGHUP \
+&& psql -t -c "select pid from pg_stat_activity limit 1";
+
+-----------------------------------------------------------------
+pg_ctlcluster 10 main restart -m fast
+
+-----------------------------------------------------------------
+pg_ctl -D datadir restart -m fast
+
+-----------------------------------------------------------------
+psql -c "CHECKPOINT"
+
+-----------------------------------------------------------------
+ALTER DATABASE foo_db CONNECTION LIMIT 0;
+
+-----------------------------------------------------------------
+ALTER USER foo CONNECTION LIMIT 0;
+
+-----------------------------------------------------------------
+postgres=# ALTER ROLE fred CONNECTION LIMIT 1;
+
+-----------------------------------------------------------------
+postgres=> SELECT rolconnlimit
+             FROM pg_roles
+             WHERE rolname = 'fred';
+
+-----------------------------------------------------------------
+postgres=> SELECT count(*)
+             FROM pg_stat_activity
+             WHERE usename = 'fred';
+
+-----------------------------------------------------------------
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE ...
+
+-----------------------------------------------------------------
+postgres=# SELECT count(pg_terminate_backend(pid))
+FROM pg_stat_activity
+WHERE usename NOT IN
+(SELECT usename
+ FROM pg_user
+WHERE usesuper);
+
+-----------------------------------------------------------------
+WHERE application_name = 'myappname'
+WHERE wait_event_type IS NOT NULL AND wait_event_type != 'Activity'
+WHERE state = 'idle in transaction'
+WHERE state = 'idle'
+
+------------------------------------------------------------------
+CREATE SCHEMA finance; 
+CREATE SCHEMA sales;
+
+------------------------------------------------------------------
+CREATE TABLE finance.month_end_snapshot (.....)
+
+------------------------------------------------------------------
+postgres=# select current_schema;
+
+------------------------------------------------------------------
+ALTER ROLE fiona SET search_path = 'finance';
+ALTER ROLE sally SET search_path = 'sales';
+
+------------------------------------------------------------------
+REVOKE ALL ON SCHEMA finance FROM public;
+GRANT ALL ON SCHEMA finance TO fiona;
+REVOKE ALL ON SCHEMA sales FROM public;
+GRANT ALL ON SCHEMA sales TO sally;
+
+------------------------------------------------------------------
+REVOKE ALL ON SCHEMA finance FROM public;
+GRANT USAGE ON SCHEMA finance TO fiona;
+GRANT CREATE ON SCHEMA finance TO fiona;
+REVOKE ALL ON SCHEMA sales FROM public;
+GRANT USAGE ON SCHEMA sales TO sally;
+GRANT CREATE ON SCHEMA sales TO sally;
+GRANT USAGE ON SCHEMA sales TO fiona;
+GRANT USAGE ON SCHEMA finance TO sally
+
+------------------------------------------------------------------
+GRANT SELECT ON month_end_snapshot TO public;
+
+------------------------------------------------------------------
+ALTER DEFAULT PRIVILEGES FOR USER fiona IN SCHEMA finance
+GRANT SELECT ON TABLES TO PUBLIC;
+
+------------------------------------------------------------------
+postgres=# create user fred;
+postgres=# create database fred owner fred;
+
+------------------------------------------------------------------
+postgres=# BEGIN;
+
+postgres=# REVOKE connect ON DATABASE  fred FROM public;
+
+postgres=# GRANT connect ON DATABASE fred TO fred;
+
+postgres=# COMMIT;
+
+postgres=# create user bob;
+
+-------------------------------------------------------------------
+os $ psql -U bob fred
+
+-------------------------------------------------------------------
+psql --port 5433 -h /var/run/postgresql ...
+
+-------------------------------------------------------------------
+psql --cluster 10/main2 ...
+
+-------------------------------------------------------------------
+; 
+; pgbouncer configuration example 
+; 
+[databases] 
+postgres = port=5432 dbname=postgres 
+[pgbouncer] 
+
+listen_addr = 127.0.0.1 
+listen_port = 6432 
+admin_users = postgres 
+;stats_users = monitoring userid 
+auth_type = any 
+; put these files somewhere sensible: 
+auth_file = users.txt 
+logfile = pgbouncer.log 
+pidfile = pgbouncer.pid 
+
+server_reset_query = DISCARD ALL; 
+; default values 
+pool_mode = session 
+default_pool_size = 20 
+log_pooler_errors = 0
+
+------------------------------------------------------------------
+"postgres"    ""
+
+------------------------------------------------------------------
+postgres=> \o users.txt
+postgres=> \t
+postgres=> SELECT '"'||rolname||'" "'||rolpassword||'"'
+postgres-> FROM pg_authid;
+postgres=> \q
+
+------------------------------------------------------------------
+pgbouncer -d pgbouncer.ini
+
+------------------------------------------------------------------
+psql -p 6432 -h 127.0.0.1 -U postgres pgbouncer -c "reload"
+
+------------------------------------------------------------------
+SELECT usename, passwd FROM pg_shadow WHERE usename=$1
+
+------------------------------------------------------------------
+psql -p 6432 pgbouncer -c "SHUTDOWN"
+
+-------------------------------------------------------------------
+[databases] 
+myfirstdb = port=5432 host=localhost 
+anotherdb = port=5437 host=localhost 
+sparedb = port=5435 host=localhost
+
+-------------------------------------------------------------------
+$ psql -p 6432 -h 127.0.0.1 -U postgres myfirstdb
+psql (9.6.1)
+Type "help" for help.
+
+myfirstdb=# show port;
+myfirstdb=# show server_version;
+
+-------------------------------------------------------------------
+myfirstdb=# \c anotherdb
+psql (10.1, server 9.6.5)
+
+-------------------------------------------------------------------
+anotherdb=# show port;
+
+anotherdb=# show server_version;
+
+-------------------------------------------------------------------
+myfirstdb=# \c pgbouncer
+
+pgbouncer=# show databases;

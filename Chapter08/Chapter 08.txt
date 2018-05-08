@@ -1,0 +1,231 @@
+CREATE EXTENSION adminpack;
+
+------------------------------------------------------------------------
+SELECT datname FROM pg_stat_activity WHERE usename = 'bob';
+
+------------------------------------------------------------------------
+SELECT datname, usename, client_addr, client_port,
+       application_name FROM pg_stat_activity;
+
+------------------------------------------------------------------------
+gabriele=> SELECT count(*) FROM pg_stat_activity;
+gabriele=> \watch 5
+
+------------------------------------------------------------------------
+SELECT datname, usename, state, query
+       FROM pg_stat_activity;
+
+-------------------------------------------------------------------------
+SELECT datname, usename, state, query
+       FROM pg_stat_activity WHERE state = 'active';
+
+--------------------------------------------------------------------------
+SELECT
+    current_timestamp - query_start AS runtime,
+    datname, usename, query
+FROM pg_stat_activity
+WHERE state = 'active'
+ORDER BY 1 DESC;
+
+--------------------------------------------------------------------------
+SELECT
+    current_timestamp - query_start AS runtime,
+    datname, usename, query
+FROM pg_stat_activity
+WHERE state = 'active'
+      AND current_timestamp - query_start > '1 min'
+ORDER BY 1 DESC;
+
+--------------------------------------------------------------------------
+update_process_title = on
+
+--------------------------------------------------------------------------
+SELECT datname
+, usename
+, wait_event_type
+, wait_event
+, query
+FROM pg_stat_activity
+WHERE wait_event_type IS NOT NULL
+AND wait_event_type NOT IN ('Activity', 'Client');
+
+--------------------------------------------------------------------------
+SELECT datname, usename, query
+       FROM pg_stat_activity
+WHERE waiting;
+
+--------------------------------------------------------------------------
+db=# SELECT pg_sleep(10);
+
+--------------------------------------------------------------------------
+SELECT datname
+, usename
+, wait_event_type
+, wait_event
+, pg_blocking_pids(pid) AS blocked_by
+, query
+FROM pg_stat_activity
+WHERE wait_event_type IS NOT NULL
+AND wait_event_type NOT IN ('Activity', 'Client');
+
+--------------------------------------------------------------------------
+kill -9 <backend_pid>
+
+--------------------------------------------------------------------------
+hannu=# SET statement_timeout TO '3 s';
+
+hannu=# SELECT pg_sleep(10);
+
+--------------------------------------------------------------------------
+SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity
+WHERE state = 'idle in transaction'
+   AND current_timestamp - query_start > '10 min';
+
+--------------------------------------------------------------------------
+kill -SIGINT <backend_pid>
+
+--------------------------------------------------------------------------
+SELECT t.schemaname || '.' || t.relname AS tablename,
+       l.pid, l.granted
+       FROM pg_locks l JOIN pg_stat_user_tables t
+       ON l.relation = t.relid;
+
+--------------------------------------------------------------------------
+CREATE TEMPORARY TABLE tmp_stat_user_tables AS
+       SELECT * FROM pg_stat_user_tables;
+
+--------------------------------------------------------------------------
+SELECT * FROM pg_stat_user_tables n
+  JOIN tmp_stat_user_tables t
+    ON n.relid=t.relid
+   AND (n.seq_scan,n.idx_scan,n.n_tup_ins,n.n_tup_upd,n.n_tup_del)
+    <> (t.seq_scan,t.idx_scan,t.n_tup_ins,t.n_tup_upd,t.n_tup_del);
+
+--------------------------------------------------------------------------
+SELECT pg_stat_reset();
+
+--------------------------------------------------------------------------
+CREATE TABLE backup_stat_user_tables AS
+       SELECT current_timestamp AS snaptime,
+              *
+ FROM pg_stat_user_tables;
+
+--------------------------------------------------------------------------
+INSERT INTO backup_stat_user_tables
+       SELECT current_timestamp AS snaptime,
+             *
+ FROM pg_stat_user_tables;
+
+--------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION table_file_access_info(
+   IN schemaname text, IN tablename text,
+   OUT last_access timestamp with time zone,
+   OUT last_change timestamp with time zone
+   ) LANGUAGE plpgsql AS $func$
+DECLARE
+    tabledir text;
+    filenode text;
+BEGIN
+    SELECT regexp_replace(
+        current_setting('data_directory') || '/' || pg_relation_filepath(c.oid),
+          pg_relation_filenode(c.oid) || '$', ''),
+        pg_relation_filenode(c.oid)
+      INTO tabledir, filenode
+      FROM pg_class c
+      JOIN pg_namespace ns
+        ON c.relnamespace = ns.oid
+       AND c.relname = tablename
+       AND ns.nspname = schemaname;
+    RAISE NOTICE 'tabledir: % - filenode: %', tabledir, filenode;
+    -- find latest access and modification times over all segments
+    SELECT max((pg_stat_file(tabledir || filename)).access),
+           max((pg_stat_file(tabledir || filename)).modification)
+      INTO last_access, last_change
+      FROM pg_ls_dir(tabledir) AS filename
+      -- only use files matching <basefilename>[.segmentnumber]
+     WHERE filename ~ ('^' || filenode || '([.]?[0-9]+)?$');
+END;
+$func$;
+
+--------------------------------------------------------------------------
+SELECT current_setting('temp_tablespaces');
+
+--------------------------------------------------------------------------
+WITH temporary_tablespaces AS (SELECT 
+ unnest(string_to_array(
+  current_setting('temp_tablespaces'), ',')
+ ) AS temp_tablespace
+)  
+SELECT tt.temp_tablespace,
+pg_tablespace_location(t.oid) AS location,
+
+ pg_tablespace_size(t.oid) AS size
+FROM temporary_tablespaces tt
+JOIN pg_tablespace t ON t.spcname = tt.temp_tablespace
+ ORDER BY 1;
+
+--------------------------------------------------------------------------
+SELECT current_setting('data_directory') || '/base/pgsql_tmp'
+
+--------------------------------------------------------------------------
+SELECT datname, temp_files, temp_bytes, stats_reset
+  FROM pg_stat_database;
+
+--------------------------------------------------------------------------
+db_01=# analyse;
+
+db_01=#
+
+--------------------------------------------------------------------------
+db=# select count(*) from t;
+
+--------------------------------------------------------------------------
+SELECT pg_relation_size(relid) AS tablesize,schemaname,relname,n_live_tup
+FROM pg_stat_user_tables
+WHERE relname = <tablename>;
+
+--------------------------------------------------------------------------
+log_destination = syslog 
+syslog_facility = LOCAL0 
+syslog_ident = 'postgres' 
+log_line_prefix = 'user=%u,db=%d,client=%h ' 
+log_temp_files = 0 
+log_statement = ddl 
+log_min_duration_statement = 1000 
+log_min_messages = info 
+log_checkpoints = on 
+log_lock_waits = on
+
+-------------------------------------------------------------------------
+#!/bin/bash
+outdir=/var/www/reports
+begin=$(date +'%Y-%m-%d %H:00:00' -d '-1 day')
+end=$(date +'%Y-%m-%d %H:00:00')
+outfile="$outdir/daily-$(date +'%H').html"
+
+pgbadger -q -b "$begin" -e "$end" -o "$outfile" \ 
+  /var/log/postgres.log.1 /var/log/postgres.log
+
+---------------------------------------------------------------------------
+user@dbhost: $ egrep "FATAL|ERROR" /var/log/postgres.log
+
+---------------------------------------------------------------------------
+shared_preload_libraries = 'pg_stat_statements'
+
+---------------------------------------------------------------------------
+gabriele=# CREATE EXTENSION pg_stat_statements;
+
+---------------------------------------------------------------------------
+SELECT query FROM pg_stat_statements ORDER BY calls DESC;
+
+---------------------------------------------------------------------------
+SELECT query, total_time/calls AS avg, calls
+       FROM pg_stat_statements ORDER BY 2 DESC;
+
+---------------------------------------------------------------------------
+SELECT * FROM bands WHERE name = 'AC/DC';
+SELECT * FROM bands WHERE name = 'Lynyrd Skynyrd';
+
+---------------------------------------------------------------------------
+gabriele=# SELECT query, calls FROM pg_stat_statements;

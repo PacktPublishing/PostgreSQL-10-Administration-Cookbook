@@ -1,0 +1,388 @@
+ wal_level = 'archive' 
+ archive_mode = on 
+ archive_command = 'scp %p $STANDBYNODE:$PGARCHIVE/%f' 
+ archive_timeout = 30
+
+----------------------------------------------------------------------
+psql -c "select pg_start_backup('base backup for log shipping')"
+
+----------------------------------------------------------------------
+rsync -cva --inplace --exclude=*pg_wal* \  
+${PGDATA}/ $STANDBYNODE:$PGDATA
+
+----------------------------------------------------------------------
+psql -c "select pg_stop_backup(), current_timestamp"
+
+----------------------------------------------------------------------
+standby_mode  =  'on'
+restore_command  =  'cp  $PGARCHIVE/%f  %p' archive_cleanup_command  =  'pg_archivecleanup  $PGARCHIVE  %r' trigger_file  =  '/tmp/postgresql.trigger.5432'   
+
+----------------------------------------------------------------------
+archive_command = 'myarchivescript %p %f'
+
+----------------------------------------------------------------------
+scp $1 $STANDBYNODE1:$PGARCHIVE/$2 
+scp $1 $STANDBYNODE2:$PGARCHIVE/$2 
+scp $1 $STANDBYNODE3:$PGARCHIVE/$2
+
+----------------------------------------------------------------------
+ps -ef | grep archiver        on master
+postgres: archiver process  last was  000000010000000000000040
+ps -ef | grep startup        on standby
+postgres: startup process  waiting for  000000010000000000000041
+
+----------------------------------------------------------------------
+CREATE USER repuser
+  REPLICATION
+  LOGIN
+  CONNECTION LIMIT 2
+  ENCRYPTED PASSWORD 'changeme';
+
+----------------------------------------------------------------------
+max_wal_senders = 2 
+wal_level = 'archive' 
+archive_mode = on 
+archive_command = 'cd .'
+
+----------------------------------------------------------------------
+pg_basebackup -d 'connection string' -D /path/to_data_dir
+
+----------------------------------------------------------------------
+--wal-method=stream
+
+----------------------------------------------------------------------
+--max-rate=RATE
+
+----------------------------------------------------------------------
+--slot=myslotname
+
+----------------------------------------------------------------------
+standby_mode = 'on' 
+primary_conninfo = 'host=192.168.0.1 user=repuser' 
+# trigger_file = ''  # no need for trigger file 9.1+
+
+----------------------------------------------------------------------
+pg_basebackup -F -z
+
+----------------------------------------------------------------------
+psql -c "select pg_start_backup('base backup for streaming rep')"
+
+----------------------------------------------------------------------
+rsync -cva --inplace --exclude=*pg_wal* \  
+${PGDATA}/ $STANDBYNODE:$PGDATA
+
+----------------------------------------------------------------------
+psql -c "select pg_stop_backup(), current_timestamp"
+
+----------------------------------------------------------------------
+standby_mode = 'on' 
+primary_conninfo = 'host=alpha user=repuser' 
+trigger_file = '/tmp/postgresql.trigger.5432'
+
+----------------------------------------------------------------------
+ALTER ROLE replogin REPLICATION;
+
+----------------------------------------------------------------------
+CREATE ROLE replogin REPLICATION LOGIN;
+
+----------------------------------------------------------------------
+ALTER ROLE replogin CONNECTION LIMIT 2;
+
+----------------------------------------------------------------------
+wal_level  =  ‘replica’  #  PostgreSQL  9.6 and above, else hot_standby
+
+----------------------------------------------------------------------
+hot_standby = on
+
+----------------------------------------------------------------------
+SELECT datname, conflicts FROM pg_stat_database;
+
+----------------------------------------------------------------------
+    SELECT
+  datname
+ ,confl_tablespace
+ ,confl_lock
+ ,confl_snapshot
+ ,confl_bufferpin
+ ,confl_deadlock
+ FROM pg_stat_database_conflicts;
+
+----------------------------------------------------------------------
+trigger_file = '/tmp/postgresql.trigger.5432'
+
+----------------------------------------------------------------------
+touch /tmp/postgresql.trigger.5432
+
+----------------------------------------------------------------------
+repmgr primary register
+
+----------------------------------------------------------------------
+repmgr standby register
+
+----------------------------------------------------------------------
+repmgr standby clone node1 -D /path/of_new_data_directory
+
+----------------------------------------------------------------------
+repmgr node rejoin -d ‘host=node2 user=repmgr’
+
+----------------------------------------------------------------------
+repmgr standby switchover
+
+----------------------------------------------------------------------
+repmgr standby promote
+
+----------------------------------------------------------------------
+repmgr standby follow
+
+----------------------------------------------------------------------
+repmgr cluster show
+
+----------------------------------------------------------------------
+repmgr cluster cleanup
+
+----------------------------------------------------------------------
+repmgr witness create
+
+----------------------------------------------------------------------
+node_id=2
+node_name=beta
+conninfo='host=beta user=repmgr'
+data_directory=/var/lib/pgsql/10/data
+
+----------------------------------------------------------------------
+repmgrd -d -f /var/lib/pgsql/repmgr/repmgr.conf &
+
+----------------------------------------------------------------------
+repmgr=# select * from repmgr.replication_status;
+
+----------------------------------------------------------------------
+max_replication_slots = 2
+
+----------------------------------------------------------------------
+SELECT (pg_create_physical_replication_slot
+('alpha_beta_1', true)).wal_position;
+
+----------------------------------------------------------------------
+SELECT * FROM pg_replication_slots;
+
+----------------------------------------------------------------------
+primary_slot_name = 'alpha_beta_1'
+
+----------------------------------------------------------------------
+SELECT pg_drop_physical_replication_slot('alpha_beta_1');
+
+----------------------------------------------------------------------
+SELECT pg_is_in_recovery();
+
+----------------------------------------------------------------------
+SELECT pg_is_wal_replay_paused();
+
+----------------------------------------------------------------------
+SELECT pg_is_in_backup();
+
+----------------------------------------------------------------------
+SELECT pg_current_wal_insert_lsn();
+
+----------------------------------------------------------------------
+SELECT pg_current_wal_lsn();
+
+----------------------------------------------------------------------
+SELECT pg_last_wal_receive_lsn();
+
+----------------------------------------------------------------------
+SELECT pg_last_wal_replay_lsn();
+
+----------------------------------------------------------------------
+SELECT pid, application_name /* or other unique key */
+,pg_current_wal_insert_lsn() /* WAL Insert lsn */
+,sent_lsn /* WALSender lsn */
+,write_lsn /* WALReceiver write lsn */
+,flush_lsn /* WALReceiver flush lsn */
+,replay_lsn /* Standby apply lsn */
+,backend_start /* Backend start */
+FROM pg_stat_replication;
+
+----------------------------------------------------------------------
+SELECT pid, application_name /* or other unique key */
+   ,write_lag, flush_lag, replay_lag
+ FROM pg_stat_replication;
+
+----------------------------------------------------------------------
+SELECT slot_name, database, age(xmin), age(catalog_xmin)
+ FROM pg_replication_slots
+ WHERE NOT active;
+
+----------------------------------------------------------------------
+SELECT slot_name
+ FROM pg_replication_slots
+ JOIN pg_stat_replication ON pid = active_pid;
+
+----------------------------------------------------------------------
+SET synchronous_commit = on;
+
+----------------------------------------------------------------------
+synchronous_standby_names = 'nodeB, nodeC, nodeD'
+
+----------------------------------------------------------------------
+synchronous_standby_names = '2 (nodeB, nodeC, nodeD)'
+
+----------------------------------------------------------------------
+synchronous_standby_names = 'any 2 (nodeB, nodeC, nodeD)'
+
+----------------------------------------------------------------------
+   SELECT
+ application_name
+ ,state                    /* startup, backup, catchup or streaming */
+ ,sync_priority            /* 0, 1 or more */ 
+ ,sync_state               /* async, sync or potential */
+ FROM pg_stat_replication
+ ORDER BY sync_priority;
+
+----------------------------------------------------------------------
+LOG standby $APPLICATION_NAME is now the synchronous 
+standby with priority N
+
+----------------------------------------------------------------------
+CREATE TABLE TransactionCheck
+ (TxnId     SERIAL PRIMARY KEY);
+
+----------------------------------------------------------------------
+INSERT INTO TransactionCheck DEFAULT VALUES RETURNING TxnId;
+
+----------------------------------------------------------------------
+SELECT pg_wal_replay_pause();
+
+----------------------------------------------------------------------
+SELECT pg_wal_replay_resume();
+
+----------------------------------------------------------------------
+SELECT pg_create_restore_point('my action name')
+
+---------------------------------------------------------------------
+SELECT pg_current_wal_write_lsn();
+
+
+----------------------------------------------------------------------
+SELECT pg_last_wal_replay_lsn();
+
+----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION wait_for_lsn(lsn pg_lsn)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  
+    LOOP
+        IF pg_last_wal_replay_lsn() IS NULL OR
+           pg_last_wal_replay_lsn() >= lsn THEN
+            RETURN;
+        END IF;
+        PERFORM pg_sleep(0.1);  /* 100ms */
+    END LOOP;
+END $$;
+
+----------------------------------------------------------------------
+SELECT alter_subscription_disable(); 
+SELECT alter_subscription_enable();
+
+----------------------------------------------------------------------
+ALTER SUBSCRIPTION mysub DISABLE;
+ALTER SUBSCRIPTION mysub ENABLE;
+
+----------------------------------------------------------------------
+CREATE EXTENSION pglogical;
+
+----------------------------------------------------------------------
+CREATE EXTENSION pglogical_origin;
+
+----------------------------------------------------------------------
+ wal_level = 'logical'
+
+----------------------------------------------------------------------
+SELECT pglogical.create_node(
+       node_name := 'nodeA',
+       dsn := 'host=nodeA dbname=postgres');
+
+----------------------------------------------------------------------
+# Record data for Logical replication 
+wal_level = 'logical' 
+# Load the pglogical extension 
+shared_preload_libraries = 'pglogical' 
+# Allow replication slot creation (we need just one but it 
+does not hurt to have more) 
+max_replication_slots = 10 
+# Allow streaming replication (we need one for slot and 
+one for basebackup but again, it does not hurt to have more) 
+max_wal_senders = 10 
+max_worker_processes = 10
+
+---------------------------------------------------------------------
+ALTER TABLE mytable REPLICA IDENTITY USING INDEX myuniquecol_idx;
+
+---------------------------------------------------------------------
+SELECT pglogical.replication_set_add_all_tables(
+                 set_name := 'default',
+                 schema_names := ARRAY['public'],
+                 true);
+
+---------------------------------------------------------------------
+SELECT pglogical.create_subscription(
+                 subscription_name := 'my_subscription_name',
+                 provide_dsn := 'host=nodeA dbname=postgres'
+                 );
+
+---------------------------------------------------------------------
+SELECT pglogical.create_replication_set(
+                 set_name := 'SmallSet');
+SELECT pglogical.replication_set_add_table(
+                 set_name := 'SmallSet',
+                 relation := 'TableX');
+
+---------------------------------------------------------------------
+SELECT pglogical.create_subscription(
+                 subscription_name := 
+'SmallSet_subscription',
+                 replication_sets := ARRAY['SmallSet'],
+                 provide_dsn := 'host=nodeA dbname=postgres'
+                 );
+
+---------------------------------------------------------------------
+SELECT pglogical.replication_set_add_table(
+                 set_name := 'SmallSet',
+                 relation := 'TableY',
+                 row_filter := 'status = 7',
+                 synchronize_data = true); 
+
+---------------------------------------------------------------------
+UPDATE table
+SET
+ col1 = col1 + random()
+,col2 = col2 + random()
+WHERE key = value
+
+---------------------------------------------------------------------
+CREATE PUBLICATION pub_nodeA_postgres_all 
+     FOR ALL TABLES;
+
+---------------------------------------------------------------------
+CREATE SUBSCRIPTION sub_nodeA_postgres_all
+CONNECTION ‘conninfo’
+PUBLICATION pub_nodeA_postgres_all;
+
+---------------------------------------------------------------------
+CREATE PUBLICATION pub_nodeA_postgres_tablex 
+     FOR TABLE TableX;
+
+---------------------------------------------------------------------
+CREATE SUBSCRIPTION sub_nodeA_postgres_tablex
+CONNECTION ‘conninfo’
+PUBLICATION pub_nodeA_postgres_tablex;
+
+---------------------------------------------------------------------
+track_commit_timestamps = on
+
+---------------------------------------------------------------------
+UPDATE foo SET col1 = col1 + 1 WHERE key = value; 
+
+---------------------------------------------------------------------
+pg_receivewal -D /pgarchive/alpha -d $MYCONNECTIONSTRING &
